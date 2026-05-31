@@ -27,9 +27,9 @@ export default function DashboardCompilaciones() {
           onKeyDown={handleKey}
           placeholder="Digite el tema o el nombre de la entidad…"
           className="flex-1 min-w-0 rounded-lg px-3 py-2 text-[12px]
-            bg-white/70 border border-[#1e2d4a]/15 text-[#1e2d4a]
-            placeholder:text-[#6274a0]/60
-            focus:outline-none focus:ring-2 focus:ring-[#1e2d4a]/25 focus:border-[#1e2d4a]/40
+            bg-white/80 border border-[#7a4d00]/20 text-[#7a4d00]
+            placeholder:text-[#b87a20]/60
+            focus:outline-none focus:ring-2 focus:ring-[#7a4d00]/20 focus:border-[#7a4d00]/30
             transition"
         />
         <button
@@ -37,9 +37,9 @@ export default function DashboardCompilaciones() {
           disabled={!ready}
           className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-[12px] font-semibold
             transition-all duration-150 shrink-0
-            bg-[#1e2d4a] text-white
+            bg-[#7a4d00] text-white
             disabled:opacity-30 disabled:cursor-not-allowed
-            enabled:hover:bg-[#253659]"
+            enabled:hover:bg-[#5c3900]"
         >
           <I.search size={13} />
           Buscar
