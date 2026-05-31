@@ -1,0 +1,78 @@
+// src/components/admin/AdminSidebar.jsx
+import { useNavigate, useLocation } from 'react-router-dom';
+import Icon from '../shared/Icon';
+import Logo from '../shared/Logo';
+import { ADMIN_NAV } from '../../constants/adminNav';
+
+function SectionLabel({ text }) {
+  return (
+    <div className="px-5 pt-2 pb-1 text-[9px] font-bold tracking-[0.12em] uppercase text-white/30">
+      {text}
+    </div>
+  );
+}
+
+export default function AdminSidebar({ open, setOpen }) {
+  const navigate  = useNavigate();
+  const location  = useLocation();
+  const active    = location.pathname.split('/').pop() || 'documents';
+
+  const go = (id) => {
+    navigate(`/admin/${id}`);
+    setOpen(false);
+  };
+
+  return (
+    <>
+      {open && (
+        <div
+          className="fixed inset-0 bg-black/50 z-[200] backdrop-blur-sm md:hidden"
+          onClick={() => setOpen(false)}
+        />
+      )}
+      <aside
+        id="sidebar"
+        className={`fixed top-0 bottom-0 z-[300] flex flex-col bg-[#1e2d4a] w-[265px]
+          shadow-2xl ${open ? 'left-0' : 'left-[-265px]'}`}
+      >
+        <div className="h-16 flex items-center px-5 bg-black/20 border-b border-white/[0.07] shrink-0">
+          <Logo subtitle="Admin Portal" />
+        </div>
+
+        <nav className="flex-1 overflow-y-auto py-3">
+          <SectionLabel text="Administration" />
+          {ADMIN_NAV.map(item => {
+            const on = active === item.id;
+            return (
+              <button
+                key={item.id}
+                onClick={() => go(item.id)}
+                className={`nav-item w-full flex items-center gap-3 px-5 py-[9px] text-[13px] text-left
+                  ${on ? 'active text-white' : 'text-white/55'}`}
+              >
+                <Icon name={item.icon} size={16} color="currentColor" />
+                <span className="flex-1">{item.label}</span>
+              </button>
+            );
+          })}
+        </nav>
+
+        <div className="border-t border-white/[0.07] py-2 shrink-0">
+          <button
+            onClick={() => navigate('/')}
+            className="w-full flex items-center gap-3 px-5 py-2.5 text-white/40
+              hover:text-white hover:bg-white/5 transition-all text-[13px]"
+          >
+            <Icon name="home" size={16} />
+            <span>Public Portal</span>
+          </button>
+          <button className="w-full flex items-center gap-3 px-5 py-2.5 text-white/40
+            hover:text-white hover:bg-white/5 transition-all text-[13px]">
+            <Icon name="logout" size={16} />
+            <span>Sign Out</span>
+          </button>
+        </div>
+      </aside>
+    </>
+  );
+}
