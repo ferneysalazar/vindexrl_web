@@ -1,13 +1,14 @@
 import { useState } from 'react';
 import { I } from '../../../icons';
 
-export default function DashboardCompilaciones() {
+export default function DashboardBusquedaAvanzada() {
   const [query, setQuery] = useState('');
   const ready = query.trim().length >= 3;
 
   function handleSearch() {
     if (!ready) return;
-    window.location.href = `/compilaciones?q=${encodeURIComponent(query.trim())}`;
+    // navigate to search results — wire to router when available
+    window.location.href = `/busqueda-avanzada?q=${encodeURIComponent(query.trim())}`;
   }
 
   function handleKey(e) {
@@ -16,16 +17,14 @@ export default function DashboardCompilaciones() {
 
   return (
     <div className="flex flex-col gap-3">
-      <p className="text-[11px] leading-[1.6]">
-        Una compilación normativa es un conjunto de documentos relacionados entre sí por su relevancia para una entidad pública. Estas colecciones actúan como un índice estructurado por temas, diseñado para articular y guiar el acceso a los documentos que las componen.
-      </p>
+      {/* search row */}
       <div className="flex gap-1.5">
         <input
           type="text"
           value={query}
           onChange={e => setQuery(e.target.value)}
           onKeyDown={handleKey}
-          placeholder="Digite el tema o el nombre de la entidad…"
+          placeholder="Digite palabras, o datos del documento…"
           className="flex-1 min-w-0 rounded-lg px-3 py-2 text-[12px]
             bg-white/70 border border-[#1e2d4a]/15 text-[#1e2d4a]
             placeholder:text-[#6274a0]/60
@@ -45,10 +44,24 @@ export default function DashboardCompilaciones() {
           Buscar
         </button>
       </div>
+
+      {/* hint */}
       <p className="text-[11px] leading-[1.6]">
-        Ingrese algunas palabras del tema o el nombre de la entidad que realizó la compilación normativa por clasificada por tema para buscar las compilaciones o también conocidas como documentos de relatoría.
+        Ingrese el número del documento, el año de expedición, la entidad que lo expide
+        o palabras del contenido del documento.
       </p>
 
+      {/* advanced link */}
+      <p className="text-[11px] leading-[1.6]">
+        Para ir a la Búsqueda Avanzada con más filtros disponibles de clic{' '}
+        <a
+          href="/busqueda-avanzada"
+          className="font-semibold underline underline-offset-2 hover:opacity-80 transition-opacity"
+        >
+          aquí
+        </a>
+        .
+      </p>
     </div>
   );
 }

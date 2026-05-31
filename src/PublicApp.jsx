@@ -12,7 +12,7 @@ const getSavedPage = () => {
 };
 
 export default function PublicApp() {
-  const [page, setPage]               = useState(getSavedPage);
+  const [page, setPage] = useState(getSavedPage);
   const [sidebarOpen, setSidebarOpen] = useState(window.innerWidth >= 960);
 
   useEffect(() => {
@@ -51,14 +51,20 @@ export default function PublicApp() {
 
         <div className="px-7 pt-5 pb-0 flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h1 className="font-display text-[24px] font-bold text-[#1e2d4a] leading-none">
-              {page === 'dashboard' ? 'Good morning, James 👋' : currentPage?.label}
+            <h1 className="font-display text-[24px] font-bold text-[#1e2d4a] leading-none my-5">
+              {page === 'dashboard' ? 'La tecnología digital dirigida a la certeza jurídica que el sector público exige 🧭' : currentPage?.label}
             </h1>
-            <p className="text-[12px] text-slate-400 mt-1.5">
-              {page === 'dashboard'
-                ? 'Sunday, April 20, 2026 · 4 hearings scheduled today'
-                : `Manage your ${currentPage?.label?.toLowerCase()}`}
-            </p>
+          </div>
+        </div>
+
+        <main className="flex-1 px-7 py-5">
+          {page === 'dashboard' ? <Dashboard /> : <PlaceholderPage pageId={page} />}
+        </main>
+
+        <Footer />
+        <div className="px-7 pt-5 pb-0 flex flex-wrap items-start justify-between gap-3">
+          <div>
+           &nbsp;
           </div>
           {page === 'dashboard' && (
             <button
@@ -71,11 +77,6 @@ export default function PublicApp() {
           )}
         </div>
 
-        <main className="flex-1 px-7 py-5">
-          {page === 'dashboard' ? <Dashboard /> : <PlaceholderPage pageId={page} />}
-        </main>
-
-        <Footer />
       </div>
     </div>
   );

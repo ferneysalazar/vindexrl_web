@@ -17,7 +17,15 @@ export default function Dashboard() {
         <ContentCard label="De Interes" icon={I.news} variant="yellow">
           <NewsRotator />
         </ContentCard>
-        <StatCard label="Documentos Totales" value="+145.000" icon={I.packageOpen} variant="blue" change={{ up: true, text: '+345 este mes' }} />
+        <StatCard
+          icon={I.packageOpen}
+          variant="blue"
+          columns={[
+            { label: 'Documentos Totales', value: '+145.000', change: { up: true,  text: '+345 este mes' } },
+            { label: 'Temas (subtemas)', value: '1.200 (3.640)',    change: { up: true,  text: '+18 este mes'  } },
+            { label: 'Compilaciones Normativas',  value: '36',  change: { up: true, text: '+4 este mes'   } },
+          ]}
+        />
       </div>
 
       <FeatureStrip />
