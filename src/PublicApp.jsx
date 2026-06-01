@@ -56,7 +56,7 @@ export default function PublicApp() {
         <div className="px-7 pt-5 pb-0 flex flex-wrap items-start justify-between gap-3">
           <div>
             <h1 className="font-display text-[24px] font-bold text-[#1e2d4a] leading-none my-5">
-              {page === 'dashboard' ? 'La tecnología digital dirigida a la certeza jurídica que el sector público exige 🧭' : currentPage?.label}
+              {page === 'dashboard' ? 'Tecnología digital diseñada para aportar la certeza jurídica y el cumplimiento normativo que el sector público requiere. 🧭' : currentPage?.label}
             </h1>
           </div>
         </div>

@@ -7,12 +7,12 @@ import AboutPanel from './AboutPanel';
 import CasesTable from './CasesTable';
 import TrackRecord from './TrackRecord';
 import PracticeAreas from './PracticeAreas';
-import Schedule from './LinksInteres';
+import LinksInteres from './LinksInteres';
 import ContactStrip from './ContactStrip';
 
 export default function Dashboard() {
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex flex-col gap-10">
       <div className="grid grid-cols-2 lg:grid-cols-2 gap-3.5">
         <ContentCard label="De Interes" icon={I.news} variant="yellow">
           <NewsRotator />
@@ -29,9 +29,8 @@ export default function Dashboard() {
       </div>
 
       <FeatureStrip />
-      <Schedule />
 
-          {/*
+      {/*
        <AboutPanel /> 
           */}
 
@@ -44,6 +43,7 @@ export default function Dashboard() {
           <PracticeAreas />
         </div>
       </div>
+      <LinksInteres />
 
       <ContactStrip />
     </div>
