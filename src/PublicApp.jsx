@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { I } from './icons';
 import Header from './components/public/Header';
 import Sidebar from './components/public/Sidebar';
 import Footer from './components/public/Footer';
@@ -44,7 +45,10 @@ export default function PublicApp() {
       >
         <div className="bg-white border-b border-slate-100 px-7 py-2.5 flex items-center gap-1.5
           text-[11px] text-slate-400">
-          <span>VindexRL</span>
+          <button onClick={() => setPage('dashboard')} className="flex items-center gap-1 hover:text-[#1e2d4a] transition-colors">
+            <I.house size={13} />
+            <span>VindexRL</span>
+          </button>
           <span className="text-slate-300">›</span>
           <span className="text-[#1e2d4a] font-bold">{currentPage?.label}</span>
         </div>

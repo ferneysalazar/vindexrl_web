@@ -7,7 +7,7 @@ import AboutPanel from './AboutPanel';
 import CasesTable from './CasesTable';
 import TrackRecord from './TrackRecord';
 import PracticeAreas from './PracticeAreas';
-import Schedule from './Schedule';
+import Schedule from './LinksInteres';
 import ContactStrip from './ContactStrip';
 
 export default function Dashboard() {
@@ -29,6 +29,8 @@ export default function Dashboard() {
       </div>
 
       <FeatureStrip />
+      <Schedule />
+
       <AboutPanel />
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-5 items-start">
@@ -39,7 +41,6 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <Schedule />
       <ContactStrip />
     </div>
   );
