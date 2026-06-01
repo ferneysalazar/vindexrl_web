@@ -17,7 +17,7 @@ export default function CasesTable() {
   return (
     <div className="bg-white rounded-xl shadow-sm overflow-hidden">
       <div className="px-6 py-4 flex items-center justify-between border-b border-slate-100">
-        <h3 className="font-display text-[16px] font-semibold text-[#1e2d4a]">Recent Cases</h3>
+        <h3 className="font-display text-[16px] font-semibold text-[#1e2d4a]">Jurisprudencia</h3>
         <button className="text-[11px] font-bold text-[#c0392b] border border-[#c0392b]/20
           rounded-md px-3 py-1 hover:bg-[#c0392b]/10 transition-colors tracking-wide">
           VIEW ALL →

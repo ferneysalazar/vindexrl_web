@@ -22,7 +22,7 @@ export default function Header({ open, setOpen }) {
       <div className="hidden sm:flex items-center gap-2 bg-white/10 rounded-lg px-3.5 py-2
         text-white/50 text-[13px] mr-3 cursor-text">
         <Icon name="search" size={14} color="currentColor" />
-        <span>Search cases, clients…</span>
+        <span>Buscar documentos…</span>
       </div>
 
       <button className="relative w-10 h-10 rounded-lg flex items-center justify-center

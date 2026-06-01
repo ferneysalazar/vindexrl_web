@@ -10,7 +10,7 @@ const AREAS = [
 export default function PracticeAreas() {
   return (
     <div className="bg-[#1e2d4a] rounded-xl p-6 shadow-md">
-      <h3 className="font-display text-[16px] font-semibold text-white mb-1">Practice Areas</h3>
+      <h3 className="font-display text-[16px] font-semibold text-white mb-1">Análisis Jurisprudencial</h3>
       <p className="text-[11px] text-white/40 mb-5">Active case distribution</p>
       <div className="flex flex-col gap-4">
         {AREAS.map((a, i) => (

@@ -21,9 +21,9 @@ export default function Dashboard() {
           icon={I.packageOpen}
           variant="blue"
           columns={[
-            { label: 'Documentos Totales', value: '+145.000', change: { up: true,  text: '+345 este mes' } },
-            { label: 'Temas (subtemas)', value: '1.200 (3.640)',    change: { up: true,  text: '+18 este mes'  } },
-            { label: 'Entidades Públicas',  value: '74',  change: { up: true, text: '+4 este mes'   } },
+            { label: 'Documentos Totales', value: '+145.000', change: { up: true, text: '+345 este mes' } },
+            { label: 'Temas (subtemas)', value: '1.200 (3.640)', change: { up: true, text: '+18 este mes' } },
+            { label: 'Entidades Públicas', value: '74', change: { up: true, text: '+4 este mes' } },
           ]}
         />
       </div>
@@ -31,12 +31,16 @@ export default function Dashboard() {
       <FeatureStrip />
       <Schedule />
 
-      <AboutPanel />
+          {/*
+       <AboutPanel /> 
+          */}
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-5 items-start">
         <CasesTable />
         <div className="flex flex-col gap-5">
+          {/*
           <TrackRecord />
+          */}
           <PracticeAreas />
         </div>
       </div>

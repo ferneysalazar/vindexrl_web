@@ -66,6 +66,8 @@ export default function PublicApp() {
         </main>
 
         <Footer />
+
+      {/*
         <div className="px-7 pt-5 pb-0 flex flex-wrap items-start justify-between gap-3">
           <div>
            &nbsp;
@@ -80,6 +82,7 @@ export default function PublicApp() {
             </button>
           )}
         </div>
+     */}
 
       </div>
     </div>

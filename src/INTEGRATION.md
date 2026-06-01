@@ -58,7 +58,7 @@ import paths in the admin files to point to your existing ones.
 
 The new `Logo.jsx` accepts a `subtitle` prop:
 ```jsx
-<Logo subtitle="Legal Management" />  // public
+<Logo subtitle="Gerencia Normativa" />  // public
 <Logo subtitle="Admin Portal" />      // admin
 ```
 

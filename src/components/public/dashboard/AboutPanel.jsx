@@ -37,7 +37,7 @@ export default function AboutPanel() {
             Delivering Results
           </div>
           <div className="font-display text-[28px] font-bold text-white leading-tight">
-            90+ Successful Cases
+            90+ Lorem Ipsum Dolor Est
           </div>
         </div>
       </div>
@@ -47,7 +47,7 @@ export default function AboutPanel() {
           About Our Firm
         </div>
         <h2 className="font-display text-[20px] font-bold text-[#1e2d4a] leading-snug mb-5">
-          Our Legal Team Delivering Trusted Client Protection
+          Lorem Ipsum Dolor Est
         </h2>
 
         <div className="flex gap-0 mb-5 border-b-2 border-slate-100">
