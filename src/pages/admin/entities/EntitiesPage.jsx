@@ -3,7 +3,7 @@ import Icon from '../../../components/shared/Icon';
 import Pagination from '../../../components/shared/Pagination';
 import { entities, entityTypes, helpers } from '../../../services/api';
 
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 3;
 
 export default function EntitiesPage() {
   const [items, setItems] = useState([]);
@@ -17,6 +17,10 @@ export default function EntitiesPage() {
 
   const [allEntities, setAllEntities] = useState([]);
 
+  useEffect(() => {
+    entities.list().then(res => setAllEntities(res.data)).catch(() => {});
+  }, []);
+
   const loadPage = (p) => {
     setLoading(true);
     setError(null);
@@ -26,16 +30,12 @@ export default function EntitiesPage() {
         setTotal(res.total);
         setTotalPages(res.totalPages);
         if (p != null) setPage(p);
-        const parentIds = [...new Set(res.data.map(r => r.parent_id).filter(Boolean))];
-        if (parentIds.length) {
-          helpers.entityByIds(parentIds).then(parents => {
-            const map = {};
-            parents.forEach(par => { map[par.id] = par.name; });
-            setParentLookup(map);
-          }).catch(() => {});
-        } else {
-          setParentLookup({});
-        }
+        const ids = res.data.map(r => r.id);
+        helpers.entityByIds(ids).then(enriched => {
+          const map = {};
+          enriched.forEach(e => { map[e.id] = e.parent_name; });
+          setParentLookup(map);
+        }).catch(() => {});
       })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false));
@@ -54,7 +54,7 @@ export default function EntitiesPage() {
       }
       setModal(null);
       loadPage(1);
-      entities.list().then(setAllEntities).catch(() => {});
+      entities.list().then(res => setAllEntities(res.data)).catch(() => {});
     } catch (e) {
       alert(e.message);
     }
@@ -65,13 +65,13 @@ export default function EntitiesPage() {
     try {
       await entities.delete(id);
       loadPage(1);
-      entities.list().then(setAllEntities).catch(() => {});
+      entities.list().then(res => setAllEntities(res.data)).catch(() => {});
     } catch (e) {
       alert(e.message);
     }
   };
 
-  const parentName = (parentId) => parentLookup[parentId] ?? '';
+  const parentName = (itemId) => parentLookup[itemId] ?? '';
 
   return (
     <div className="crud-page">
@@ -114,7 +114,7 @@ export default function EntitiesPage() {
                 <tr key={item.id} className="crud-row">
                   <td className="crud-td-mono">{(page - 1) * PAGE_SIZE + i + 1}</td>
                   <td className="crud-td-label">{item.name}</td>
-                  <td className="crud-td-label">{parentName(item.parent_id)}</td>
+                  <td className="crud-td-label">{parentName(item.id)}</td>
                   <td className="crud-td-actions">
                     <div className="btn-wrap">
                       <button onClick={() => setModal({ type: 'edit', item })} title="Edit" className="btn-edit">
@@ -153,7 +153,8 @@ function EntityModal({ item, entities, onSave, onClose }) {
   const userChanged = useRef(false);
 
   useEffect(() => {
-    entityTypes.list().then(all => {
+    entityTypes.list().then(res => {
+      const all = res.data ?? res;
       setTypes(all);
       if (userChanged.current) return;
       const currentId = item?.entity_type_id;
