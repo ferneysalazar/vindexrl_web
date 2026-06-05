@@ -1,6 +1,6 @@
 import Icon from '../../../../components/shared/Icon';
 
-export function Section({ icon, title, sub, children }) {
+export function Section({ icon, title, sub, children, disabled }) {
   return (
     <div className="bg-white rounded-xl shadow-sm overflow-hidden">
       <div className="px-6 py-4 border-b border-slate-100 flex items-center gap-3">
@@ -12,17 +12,18 @@ export function Section({ icon, title, sub, children }) {
           {sub && <span className="text-[11px] text-slate-400">{sub}</span>}
         </div>
       </div>
-      <div className="p-6">{children}</div>
+      <div className={`p-6 ${disabled ? 'diagonal-pattern' : ''}`}>{children}</div>
     </div>
   );
 }
 
-export function Field({ label, required, children, hint, className = '' }) {
+export function Field({ label, required, children, hint, className = '', error }) {
   return (
     <div className={className}>
       <label className={`field-label ${required ? 'req' : ''}`}>{label}</label>
       {children}
-      {hint && <p className="text-[11px] text-slate-400 mt-1.5">{hint}</p>}
+      {error && <p className="text-[11px] text-[#c0392b] mt-1">{error}</p>}
+      {!error && hint && <p className="text-[11px] text-slate-400 mt-1.5">{hint}</p>}
     </div>
   );
 }

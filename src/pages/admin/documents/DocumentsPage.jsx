@@ -38,17 +38,13 @@ export default function DocumentsPage() {
   useEffect(() => { fetchDocs(); }, [page]);
 
   const handleSave = async (payload) => {
-    try {
-      if (editingItem) {
-        await documents.update(editingItem.id, payload);
-      } else {
-        await documents.create(payload);
-      }
-      setEditingItem(undefined);
-      fetchDocs(1);
-    } catch (e) {
-      alert(e.message);
+    if (editingItem) {
+      await documents.update(editingItem.id, payload);
+    } else {
+      await documents.create(payload);
     }
+    setEditingItem(undefined);
+    fetchDocs(1);
   };
 
   const handleDelete = async (id) => {

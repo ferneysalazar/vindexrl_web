@@ -121,6 +121,12 @@
 .split-panel { display: flex; gap: 1.25rem; flex: 1; min-height: 0; }
 .split-panel > * { flex: 1; min-width: 0; }
 
+/* ─── Hide spinners & native date icons ─── */
+.no-spinner::-webkit-inner-spin-button,
+.no-spinner::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.no-spinner { -moz-appearance: textfield; }
+
+
 /* ─── Document form fields ─── */
 .field-input {
   width: 100%;
@@ -151,6 +157,17 @@
   to   { opacity: 1; transform: none; }
 }
 .slidein { animation: slidein .18s ease; }
+
+/* ─── Diagonal lines pattern for disabled sections ─── */
+.diagonal-pattern {
+  background-image: repeating-linear-gradient(
+    45deg,
+    transparent,
+    transparent 8px,
+    rgba(0,0,0,0.05) 8px,
+    rgba(0,0,0,0.05) 16px
+  );
+}
 
 /* ─── Inline document form ─── */
 .doc-form { background: #fff; border-radius: 0.75rem; box-shadow: 0 1px 3px rgba(0,0,0,0.08); padding: 1.5rem; }

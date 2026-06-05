@@ -18,7 +18,7 @@ export const THEME_TREE = {
 };
 export const THEME_NAMES = Object.keys(THEME_TREE);
 
-export const DESC_MAX = 200;
+export const DESC_MAX = 400;
 
 let _uid = 100;
 export const uid = () => ++_uid;
