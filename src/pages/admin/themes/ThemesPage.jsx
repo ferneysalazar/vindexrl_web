@@ -3,7 +3,8 @@ import Icon from '../../../components/shared/Icon';
 import Pagination from '../../../components/shared/Pagination';
 import { themes, subthemes } from '../../../services/api';
 
-const PAGE_SIZE = 20;
+const THEME_PAGE_SIZE = 20;
+const SUB_PAGE_SIZE = 3;
 
 export default function ThemesPage() {
   const [themeItems, setThemeItems] = useState([]);
@@ -29,7 +30,7 @@ export default function ThemesPage() {
     setThemeLoading(true);
     setThemeError(null);
     const p = targetPage ?? themePage;
-    themes.list({ page: p, size: PAGE_SIZE })
+    themes.list({ page: p, size: THEME_PAGE_SIZE })
       .then(res => {
         setThemeItems(res.data);
         setThemeTotal(res.total);
@@ -41,12 +42,11 @@ export default function ThemesPage() {
   };
 
   const fetchSubthemes = (targetPage) => {
+    if (!selectedThemeId) return;
     setSubLoading(true);
     setSubError(null);
     const p = targetPage ?? subPage;
-    const params = { page: p, size: PAGE_SIZE };
-    if (selectedThemeId) params.theme_id = selectedThemeId;
-    subthemes.list(params)
+    subthemes.list(selectedThemeId, { page: p, size: SUB_PAGE_SIZE })
       .then(res => {
         setSubItems(res.data);
         setSubTotal(res.total);
@@ -58,7 +58,7 @@ export default function ThemesPage() {
   };
 
   useEffect(() => { fetchThemes(); }, [themePage]);
-  useEffect(() => { if (selectedThemeId) fetchSubthemes(); }, [subPage]);
+  useEffect(() => { if (selectedThemeId) fetchSubthemes(); }, [subPage, selectedThemeId]);
 
   const handleThemeSave = async (payload) => {
     try {
@@ -145,7 +145,7 @@ export default function ThemesPage() {
                     onClick={() => handleThemeRowClick(item.id, item.name)}
                     style={{ cursor: 'pointer' }}
                   >
-                    <td className="crud-td-mono">{(themePage - 1) * PAGE_SIZE + i + 1}</td>
+                    <td className="crud-td-mono">{(themePage - 1) * THEME_PAGE_SIZE + i + 1}</td>
                     <td className="crud-td-label">{item.name}</td>
                     <td className="crud-td-actions">
                       <div className="btn-wrap">
@@ -161,7 +161,7 @@ export default function ThemesPage() {
                   ))}
                 </tbody>
               </table>
-              <Pagination page={themePage} totalPages={themeTotalPages} total={themeTotal} pageSize={PAGE_SIZE} label="themes" onPageChange={setThemePage} />
+              <Pagination page={themePage} totalPages={themeTotalPages} total={themeTotal} pageSize={THEME_PAGE_SIZE} label="themes" onPageChange={setThemePage} />
             </div>
           </div>
 
@@ -202,7 +202,7 @@ export default function ThemesPage() {
                   <tr><td className="crud-state-row" colSpan={3}>No subthemes for this theme.</td></tr>
                 ) : subItems.map((item, i) => (
                   <tr key={item.id} className="crud-row">
-                    <td className="crud-td-mono">{(subPage - 1) * PAGE_SIZE + i + 1}</td>
+                    <td className="crud-td-mono">{(subPage - 1) * SUB_PAGE_SIZE + i + 1}</td>
                     <td className="crud-td-label">{item.name}</td>
                     <td className="crud-td-actions">
                       <div className="btn-wrap">
@@ -219,7 +219,7 @@ export default function ThemesPage() {
               </tbody>
             </table>
             {selectedThemeId && (
-              <Pagination page={subPage} totalPages={subTotalPages} total={subTotal} pageSize={PAGE_SIZE} label="subthemes" onPageChange={setSubPage} />
+              <Pagination page={subPage} totalPages={subTotalPages} total={subTotal} pageSize={SUB_PAGE_SIZE} label="subthemes" onPageChange={setSubPage} />
             )}
           </div>
         </div>

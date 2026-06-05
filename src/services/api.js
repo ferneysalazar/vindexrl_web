@@ -43,7 +43,7 @@ export const themes = {
 };
 
 export const subthemes = {
-  list:  (params = {}) => request('/subtheme' + toQuery(params)),
+  list:  (themeId, params = {}) => request(`/subtheme/theme/${themeId}` + toQuery(params)),
   get:   (id)         => request(`/subtheme/${id}`),
   create:(body)       => request('/subtheme', { method: 'POST', body: JSON.stringify(body) }),
   update:(id, body)   => request(`/subtheme/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
@@ -56,6 +56,14 @@ export const entities = {
   create:(body)       => request('/entity', { method: 'POST', body: JSON.stringify(body) }),
   update:(id, body)   => request(`/entity/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
   delete:(id)         => request(`/entity/${id}`, { method: 'DELETE' }),
+};
+
+export const documents = {
+  list:  (params = {}) => request('/document' + toQuery(params)),
+  get:   (id)         => request(`/document/${id}`),
+  create:(body)       => request('/document', { method: 'POST', body: JSON.stringify(body) }),
+  update:(id, body)   => request(`/document/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+  delete:(id)         => request(`/document/${id}`, { method: 'DELETE' }),
 };
 
 export const helpers = {

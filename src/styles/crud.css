@@ -120,3 +120,46 @@
 /* ─── Split panel ─── */
 .split-panel { display: flex; gap: 1.25rem; flex: 1; min-height: 0; }
 .split-panel > * { flex: 1; min-width: 0; }
+
+/* ─── Document form fields ─── */
+.field-input {
+  width: 100%;
+  background: #f9fafc;
+  border: 1px solid #e2e6ef;
+  border-radius: 8px;
+  padding: 10px 13px;
+  font-size: 13px;
+  color: #1e2d4a;
+  transition: border-color .14s, background .14s;
+}
+.field-input:focus { border-color: #c0392b; background: #fff; }
+.field-input::placeholder { color: #9aa3bd; }
+
+.field-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #5a6282;
+  margin-bottom: 7px;
+  display: block;
+}
+.req::after { content: ' *'; color: #c0392b; }
+
+@keyframes slidein {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: none; }
+}
+.slidein { animation: slidein .18s ease; }
+
+/* ─── Inline document form ─── */
+.doc-form { background: #fff; border-radius: 0.75rem; box-shadow: 0 1px 3px rgba(0,0,0,0.08); padding: 1.5rem; }
+.doc-form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(22rem, 1fr)); gap: 1.5rem; }
+.doc-form-section { display: flex; flex-direction: column; gap: 1rem; }
+.doc-form-section-title { font-size: 13px; font-weight: 700; color: #1e2d4a; padding-bottom: 0.5rem; border-bottom: 1px solid #f1f5f9; margin-bottom: 0.25rem; }
+.form-row { display: flex; gap: 0.75rem; }
+.form-row > .form-group { flex: 1; min-width: 0; }
+.form-group { display: flex; flex-direction: column; }
+.form-checkboxes { display: flex; flex-direction: column; gap: 0.5rem; padding: 0.25rem 0; }
+.form-checkbox { display: flex; align-items: center; gap: 0.5rem; font-size: 13px; color: #1e2d4a; cursor: pointer; }
+.form-checkbox input[type="checkbox"] { width: 1rem; height: 1rem; accent-color: #c0392b; }
