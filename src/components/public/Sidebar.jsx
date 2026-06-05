@@ -1,3 +1,4 @@
+import { useNavigate } from 'react-router-dom';
 import Icon from '../shared/Icon';
 import Logo from '../shared/Logo';
 import { NAV } from '../../constants/nav';
@@ -30,6 +31,8 @@ function NavBtn({ item, active, onSelect }) {
 }
 
 export default function Sidebar({ active, setActive, open, setOpen }) {
+  const navigate = useNavigate();
+
   return (
     <>
       {open && (
@@ -66,6 +69,15 @@ export default function Sidebar({ active, setActive, open, setOpen }) {
               onSelect={id => { setActive(id); setOpen(false); }}
             />
           ))}
+          <SectionLabel text="Admin" />
+          <button
+            onClick={() => { navigate('/admin/documents'); setOpen(false); }}
+            className="nav-item w-full flex items-center gap-3 px-5 py-[9px] text-[13px] text-left
+              text-white/55 hover:text-white hover:bg-white/5 transition-all"
+          >
+            <Icon name="documents" size={16} color="currentColor" />
+            <span className="flex-1">Documents</span>
+          </button>
         </nav>
 
         <div className="border-t border-white/[0.07] py-2 shrink-0">

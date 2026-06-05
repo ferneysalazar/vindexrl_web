@@ -43,6 +43,7 @@ export default function PublicApp() {
         className="flex-1 flex flex-col"
         style={{ marginLeft: sidebarOpen ? '265px' : '0px', marginTop: '64px' }}
       >
+        {/* Breadcrumb: shows a home link and current page label */}
         <div className="bg-white border-b border-slate-100 px-7 py-2.5 flex items-center gap-1.5
           text-[11px] text-slate-400">
           <button onClick={() => setPage('dashboard')} className="flex items-center gap-1 hover:text-[#1e2d4a] transition-colors">
@@ -53,10 +54,15 @@ export default function PublicApp() {
           <span className="text-[#1e2d4a] font-bold">{currentPage?.label}</span>
         </div>
 
-        <div className="px-7 pt-5 pb-0 flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h1 className="font-display text-[24px] font-bold text-[#1e2d4a] leading-none my-5">
-              {page === 'dashboard' ? 'Tecnología digital diseñada para aportar la certeza jurídica y el cumplimiento normativo que el sector público requiere. 🧭' : currentPage?.label}
+        <div className="px-7 pt-5 pb-0 flex flex-wrap items-center justify-center gap-3">
+          <div className="text-center">
+            <h1 className="font-display text-[24px] font-bold text-[#1e2d4a] leading-snug my-3">
+              {page === 'dashboard' ? (
+                <>
+                  Tecnología digital diseñada para aportar la certeza jurídica<br />
+                  y el cumplimiento normativo que el sector público requiere. 🧭
+                </>
+              ) : currentPage?.label}
             </h1>
           </div>
         </div>
