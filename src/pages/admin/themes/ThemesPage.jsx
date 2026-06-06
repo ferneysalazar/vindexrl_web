@@ -84,9 +84,9 @@ export default function ThemesPage() {
   const handleSubSave = async (payload) => {
     try {
       if (subModal.type === 'create') {
-        await subthemes.create({ ...payload, theme_id: selectedThemeId });
+        await subthemes.create({ ...payload, themeId: selectedThemeId });
       } else {
-        await subthemes.update(subModal.item.id, { ...payload, theme_id: selectedThemeId });
+        await subthemes.update(subModal.item.id, { ...payload, themeId: selectedThemeId });
       }
       setSubModal(null);
       fetchSubthemes(1);

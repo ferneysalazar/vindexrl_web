@@ -1,29 +1,28 @@
-import { useState } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import Icon from '../../../../components/shared/Icon';
 import { Section, Field, Select } from './fields';
 import EntitiesField from './EntitiesField';
 import ThemesField from './ThemesField';
 import { CHARSETS, DESC_MAX, uid } from './referenceData';
+import { documentEntities } from '../../../../services/api';
+import { useDataCache } from '../../../../contexts/DataCache';
 
 const CURRENT_YEAR = new Date().getFullYear();
 
-export default function DocumentForm({ item, normTypeOptions, onSave, onCancel }) {
+export default function DocumentForm({ item, onSave, onCancel }) {
   const isEdit = !!item;
 
   const initStr = (val) => val ?? '';
-  const initArr = (val) => val ?? [];
 
-  const normNames = normTypeOptions.map(n => n.name);
-  const normNameToId = {};
-  normTypeOptions.forEach(n => { normNameToId[n.name] = n.id; });
-  const normIdToName = {};
-  normTypeOptions.forEach(n => { normIdToName[n.id] = n.name; });
-
-  const [docType, setDocType]     = useState(isEdit ? (normIdToName[item.norm_type_id] ?? '') : '');
+  const { normNames, normNameToId, entityList } = useDataCache();
+  const entityNameToId = Object.fromEntries(entityList.map(e => [e.name, e.id]));
+  const entityIdToName = Object.fromEntries(entityList.map(e => [e.id, e.name]));
+  const entityNames = entityList.map(e => e.name);
+  const [docType, setDocType]     = useState(isEdit ? (item.normTypeName ?? '') : '');
   const [docNumber, setDocNum]    = useState(initStr(item?.number));
   const [year, setYear]           = useState(initStr(item?.year?.toString()));
   const [description, setDesc]    = useState(initStr(item?.summary));
-  const [entities, setEntities]   = useState(isEdit ? [{ id: uid(), value: initStr(item?.requester) }] : [{ id: uid(), value: '' }]);
+  const [entities, setEntities]   = useState(isEdit ? [] : [{ id: uid(), value: '' }]);
   const [issueDate, setIssue]     = useState(initStr(item?.issued_date));
   const [effectDate, setEffect]   = useState(initStr(item?.effective_date));
   const [media, setMedia]         = useState(initStr(item?.published_in));
@@ -36,7 +35,70 @@ export default function DocumentForm({ item, normTypeOptions, onSave, onCancel }
   const [hasPdf, setHasPdf]       = useState(isEdit ? !!item.file_name : false);
   const [pdfName, setPdfName]     = useState(initStr(item?.file_name));
 
+  const [savedEntities, setSavedEntities] = useState([]);
+  const [entitiesLoading, setEntitiesLoading] = useState(isEdit);
+  const [entitySaving, setEntitySaving] = useState(false);
+
+  useEffect(() => {
+    if (!isEdit) return;
+    setEntitiesLoading(true);
+    const entityIdToName = Object.fromEntries(entityList.map(e => [e.id, e.name]));
+    documentEntities.list(item.id).catch(() => [])
+      .then(docEntityRes => {
+        const dData = docEntityRes?.data ?? docEntityRes ?? [];
+        const resolve = (e) => e.entityName ?? e.entity?.name ?? entityIdToName[e.entityId] ?? '';
+        const mapped = (dData || []).map(e => ({
+          id: uid(),
+          value: resolve(e),
+          docEntityId: e.id,
+        }));
+        if (!mapped.length) mapped.push({ id: uid(), value: '' });
+        setEntities(mapped);
+        setSavedEntities(JSON.parse(JSON.stringify(mapped)));
+      })
+      .catch(() => {
+        const fallback = [{ id: uid(), value: initStr(item?.requester) }];
+        setEntities(fallback);
+        setSavedEntities(JSON.parse(JSON.stringify(fallback)));
+      })
+      .finally(() => setEntitiesLoading(false));
+  }, [isEdit, item?.id, entityList]);
+
   const clearError = (field) => setFieldErrors(prev => ({ ...prev, [field]: '' }));
+
+  const initialValues = useMemo(() => ({
+    docType: isEdit ? (item.normTypeName ?? '') : '',
+    docNumber: initStr(item?.number),
+    year: initStr(item?.year?.toString()),
+    description: initStr(item?.summary),
+    issueDate: initStr(item?.issued_date),
+    effectDate: initStr(item?.effective_date),
+    media: initStr(item?.published_in),
+    keyword: initStr(item?.key_words),
+    externalUrl: initStr(item?.external_url),
+    hasPdf: isEdit ? !!item.file_name : false,
+    pdfName: initStr(item?.file_name),
+  }), []);
+
+  const isFormDirty =
+    docType !== initialValues.docType ||
+    docNumber !== initialValues.docNumber ||
+    year !== initialValues.year ||
+    description !== initialValues.description ||
+    issueDate !== initialValues.issueDate ||
+    effectDate !== initialValues.effectDate ||
+    media !== initialValues.media ||
+    keyword !== initialValues.keyword ||
+    externalUrl !== initialValues.externalUrl ||
+    hasPdf !== initialValues.hasPdf ||
+    pdfName !== initialValues.pdfName;
+
+  const entitiesChanged = useMemo(() => {
+    if (entities.length !== savedEntities.length) return true;
+    return entities.some((e, i) => e.value !== (savedEntities[i]?.value ?? ''));
+  }, [entities, savedEntities]);
+
+  const isUpdateDisabled = isEdit && (!isFormDirty || entitiesChanged);
 
   const handleSubmit = () => {
     const errors = {};
@@ -49,7 +111,6 @@ export default function DocumentForm({ item, normTypeOptions, onSave, onCancel }
     }
     if (!description) errors.description = 'Summary is required';
 
-
     setFieldErrors(errors);
     if (Object.keys(errors).length) return;
 
@@ -57,22 +118,120 @@ export default function DocumentForm({ item, normTypeOptions, onSave, onCancel }
       number: docNumber || undefined,
       year: year || undefined,
       summary: description || undefined,
-      issued_date: issueDate || undefined,
-      effective_date: effectDate || null,
-      external_url: externalUrl || null,
-      file_name: hasPdf ? (pdfName || undefined) : null,
-      norm_type_id: docType ? (normNameToId[docType] || undefined) : undefined,
-      file_type: null,
-      internal_number: null,
-      key_words: keyword || undefined,
+      issuedDate: issueDate || undefined,
+      effectiveDate: effectDate || null,
+      externalUrl: externalUrl || null,
+      fileName: hasPdf ? (pdfName || undefined) : null,
+      normTypeId: docType ? (normNameToId[docType] || undefined) : undefined,
+      fileType: null,
+      internalNumber: null,
+      keyWords: keyword || undefined,
       level: null,
       month: null,
-      additional_pdf: false,
+      additionalPdf: false,
       exclusive: false,
-      published_in: media || undefined,
+      publishedIn: media || undefined,
     };
     setSaveError(null);
     onSave(payload).catch(e => setSaveError(e.message));
+  };
+
+  const resolveEntityName = (e) => {
+    return e.entityName ?? e.entity?.name ?? entityIdToName[e.entityId] ?? '';
+  };
+
+  const syncEntitiesFromServer = () => {
+    return documentEntities.list(item.id)
+      .then(res => {
+        const data = res.data ?? res ?? [];
+        const mapped = (data || []).map(e => ({
+          id: uid(),
+          value: resolveEntityName(e),
+          docEntityId: e.id,
+        }));
+        if (!mapped.length) mapped.push({ id: uid(), value: '' });
+        setEntities(mapped);
+        setSavedEntities(JSON.parse(JSON.stringify(mapped)));
+      });
+  };
+
+  const handleEntityUpdate = async () => {
+    if (!isEdit || !item?.id) return;
+    setEntitySaving(true);
+    try {
+      for (const entity of entities) {
+        if (!entity.value) continue;
+        const entityId = entityNameToId[entity.value];
+        if (!entityId) continue;
+        if (entity.docEntityId) {
+          await documentEntities.update(item.id, entity.docEntityId, { entityId });
+        } else {
+          await documentEntities.create(item.id, { entityId });
+        }
+      }
+      await syncEntitiesFromServer();
+    } catch (e) {
+      setSaveError('Error saving entity: ' + e.message);
+    } finally {
+      setEntitySaving(false);
+    }
+  };
+
+  const handleEntityCancel = () => {
+    if (savedEntities.length) {
+      setEntities(JSON.parse(JSON.stringify(savedEntities)));
+    } else {
+      setEntities([{ id: uid(), value: '' }]);
+    }
+  };
+
+  const handleRowUpdate = async (localId) => {
+    const entity = entities.find(e => e.id === localId);
+    if (!entity || !entity.value || !isEdit || !item?.id) return;
+    const eid = entityNameToId[entity.value];
+    if (!eid) return;
+    setEntitySaving(true);
+    try {
+      if (entity.docEntityId) {
+        await documentEntities.update(item.id, entity.docEntityId, { entityId: eid });
+      } else {
+        await documentEntities.create(item.id, { entityId: eid });
+      }
+      await syncEntitiesFromServer();
+    } catch (e) {
+      setSaveError('Error saving entity: ' + e.message);
+    } finally {
+      setEntitySaving(false);
+    }
+  };
+
+  const handleRowDelete = async (entityId) => {
+    const entity = entities.find(e => e.id === entityId);
+    if (!entity || !entity.docEntityId || !isEdit || !item?.id) return;
+    setEntitySaving(true);
+    try {
+      await documentEntities.delete(item.id, entity.docEntityId);
+      const updated = entities.filter(e => e.id !== entityId);
+      if (!updated.length) updated.push({ id: uid(), value: '' });
+      setEntities(updated);
+      setSavedEntities(prev => prev.filter(e => e.docEntityId !== entity.docEntityId));
+    } catch (e) {
+      setSaveError('Error deleting entity: ' + e.message);
+    } finally {
+      setEntitySaving(false);
+    }
+  };
+
+  const handleRowCancel = (entityId) => {
+    const saved = savedEntities.find(e => e.id === entityId);
+    if (saved) {
+      setEntities(prev => prev.map(e => e.id === entityId ? { ...e, value: saved.value } : e));
+    } else {
+      setEntities(prev => {
+        const filtered = prev.filter(e => e.id !== entityId);
+        return filtered.length ? filtered : [{ id: uid(), value: '' }];
+      });
+    }
   };
 
   return (
@@ -103,7 +262,7 @@ export default function DocumentForm({ item, normTypeOptions, onSave, onCancel }
       <Section icon="doctypes" title="Identification" sub="Type · Number · Year — the unique reference">
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <Field label="Document Type" required error={fieldErrors.docType}>
-            <Select value={docType} onChange={e => { setDocType(e.target.value); clearError('docType'); }} options={normNames.length ? normNames : ['Regulation', 'Directive', 'Resolution', 'Act', 'Decree', 'Guideline', 'Policy', 'Notice', 'Circular']} placeholder="Select type…" />
+            <Select value={docType} onChange={e => { setDocType(e.target.value); clearError('docType'); }} options={normNames} placeholder="Select type…" />
           </Field>
           <Field label="Document Number" required error={fieldErrors.docNumber}>
             <input type="text" value={docNumber} onChange={e => { setDocNum(e.target.value); clearError('docNumber'); }}
@@ -134,8 +293,24 @@ export default function DocumentForm({ item, normTypeOptions, onSave, onCancel }
         <div className="flex flex-col gap-4">
           <div className={!isEdit ? 'diagonal-pattern rounded-lg p-3 -mx-3' : ''}>
             <Field label="Publisher Entity" required
-              hint={!isEdit ? 'Save the document first, then edit to assign entities.' : 'Usually one. Click “Multiple” to add and list several entities inline.'}>
-              <EntitiesField entities={entities} setEntities={setEntities} disabled={!isEdit} />
+              hint={!isEdit ? 'Save the document first, then edit to assign entities.' : 'Usually one. Click "Multiple" to add and list several entities inline.'}>
+              {entitiesLoading ? (
+                <div className="field-input flex items-center text-slate-400 text-[13px]">Loading entities…</div>
+              ) : (
+                <EntitiesField
+                  entities={entities}
+                  setEntities={setEntities}
+                  disabled={!isEdit}
+                  entitiesChanged={entitiesChanged}
+                  onUpdateEntity={handleEntityUpdate}
+                  onCancelEntity={handleEntityCancel}
+                  onRowUpdate={handleRowUpdate}
+                  onRowDelete={handleRowDelete}
+                  onRowCancel={handleRowCancel}
+                  saving={entitySaving}
+                  entityOptions={entityNames}
+                />
+              )}
             </Field>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -151,7 +326,7 @@ export default function DocumentForm({ item, normTypeOptions, onSave, onCancel }
 
       <Section icon="themes" title="Themes & Subthemes" sub="Classify the document by theme and subtheme" disabled={!isEdit}>
         <Field label="Themes & Subthemes"
-          hint="Shows the first assignment. Click “Details” to view, add or remove all theme / subtheme records.">
+          hint={'Shows the first assignment. Click \u201cDetails\u201d to view, add or remove all theme / subtheme records.'}>
           <ThemesField rows={themeRows} setRows={setThemeRows} disabled={!isEdit} />
         </Field>
       </Section>
@@ -212,8 +387,10 @@ export default function DocumentForm({ item, normTypeOptions, onSave, onCancel }
           <button type="button" onClick={onCancel} className="px-5 py-2.5 rounded-lg bg-slate-100 text-slate-500 text-[12px] font-bold
             hover:bg-slate-200 transition-colors tracking-wide">CANCEL</button>
           <button onClick={handleSubmit}
-            className="flex items-center gap-2 px-6 py-2.5 rounded-lg bg-[#c0392b] text-white text-[12px] font-bold
-              tracking-wide hover:opacity-90 transition-opacity" style={{ boxShadow: '0 4px 16px rgba(192,57,43,0.35)' }}>
+            disabled={isUpdateDisabled}
+            className={`flex items-center gap-2 px-6 py-2.5 rounded-lg text-white text-[12px] font-bold
+              tracking-wide transition-all ${isUpdateDisabled ? 'bg-slate-400 cursor-not-allowed shadow-none' : 'bg-[#c0392b] hover:opacity-90'}`}
+            style={isUpdateDisabled ? {} : { boxShadow: '0 4px 16px rgba(192,57,43,0.35)' }}>
             <Icon name="save" size={15} color="#fff" /> {isEdit ? 'UPDATE DOCUMENT' : 'SAVE DOCUMENT'}
           </button>
         </div>

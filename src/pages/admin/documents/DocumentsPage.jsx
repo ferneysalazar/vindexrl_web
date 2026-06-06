@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import Icon from '../../../components/shared/Icon';
 import Pagination from '../../../components/shared/Pagination';
-import { documents, normTypes } from '../../../services/api';
+import { documents, xdocuments } from '../../../services/api';
 import DocumentForm from './form/DocumentForm';
 
 const PAGE_SIZE = 20;
@@ -14,17 +14,16 @@ export default function DocumentsPage() {
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
   const [editingItem, setEditingItem] = useState(undefined);
-  const [normTypeOptions, setNormTypeOptions] = useState([]);
+  const [searchQuery, setSearchQuery] = useState('');
 
-  useEffect(() => {
-    normTypes.list().then(res => setNormTypeOptions(res.data ?? res)).catch(() => {});
-  }, []);
-
-  const fetchDocs = (targetPage) => {
+  const fetchDocs = (targetPage, search) => {
     const p = targetPage ?? page;
+    const params = { page: p, size: PAGE_SIZE };
+    const q = search ?? searchQuery;
+    if (q) params.search = q;
     setLoading(true);
     setError(null);
-    documents.list({ page: p, size: PAGE_SIZE })
+    xdocuments.list(params)
       .then(res => {
         setItems(res.data);
         setTotal(res.total);
@@ -78,11 +77,27 @@ export default function DocumentsPage() {
       {showForm ? (
         <DocumentForm
           item={editingItem}
-          normTypeOptions={normTypeOptions}
           onSave={handleSave}
           onCancel={() => setEditingItem(undefined)}
         />
       ) : (
+        <><div className="flex items-center gap-3 mb-4">
+          <div className="relative flex-1 max-w-md">
+            <input type="text" value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') fetchDocs(1); }}
+              placeholder="Search documents…" className="field-input pr-10" />
+            <button onClick={() => fetchDocs(1)}
+              className="absolute right-1 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center
+                rounded-md hover:bg-[#e8edf7] transition-colors text-slate-400 hover:text-[#1e2d4a]">
+              <Icon name="search" size={16} color="currentColor" />
+            </button>
+          </div>
+          <button onClick={() => fetchDocs(1)} title="Refresh"
+            className="w-9 h-9 rounded-lg bg-white shadow-sm flex items-center justify-center
+              text-slate-500 hover:text-[#1e2d4a] transition-colors">
+            <Icon name="refresh" size={16} color="currentColor" />
+          </button>
+        </div>
         <div className="crud-table-wrap">
           <div className="overflow-x-auto">
             <table className="crud-table">
@@ -91,8 +106,8 @@ export default function DocumentsPage() {
                   <th className="crud-th" style={{width:'3rem'}}>#</th>
                   <th className="crud-th">Number</th>
                   <th className="crud-th">Year</th>
-                  <th className="crud-th">Type</th>
-                  <th className="crud-th">Summary</th>
+                  <th className="crud-th">DocumentType</th>
+                  <th className="crud-th">Document</th>
                   <th className="crud-th" style={{width:'7rem', textAlign:'center'}}>Actions</th>
                 </tr>
               </thead>
@@ -113,8 +128,8 @@ export default function DocumentsPage() {
                     <td className="crud-td-mono">{(page - 1) * PAGE_SIZE + i + 1}</td>
                     <td className="crud-td-label">{item.number}</td>
                     <td className="crud-td-label">{item.year}</td>
-                    <td className="crud-td-label">{item.norm_type_name ?? item.file_type}</td>
-                    <td className="crud-td-label" style={{maxWidth:'20rem', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{item.summary}</td>
+                    <td className="crud-td-label">{item.normTypeName}</td>
+                    <td className="crud-td-label" style={{maxWidth:'20rem', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{item.documentName}{item.entityCount > 1 ? <span className="text-[#c0392b] cursor-default" title={`This document has ${item.entityCount} entities`}> [+{item.entityCount - 1}]</span> : ''}</td>
                     <td className="crud-td-actions">
                       <div className="btn-wrap">
                         <button onClick={() => setEditingItem(item)} title="Edit" className="btn-edit">
@@ -132,7 +147,7 @@ export default function DocumentsPage() {
           </div>
           <Pagination page={page} totalPages={totalPages} total={total} pageSize={PAGE_SIZE} label="documents" onPageChange={setPage} />
         </div>
-      )}
+      </>)}
     </div>
   );
 }
