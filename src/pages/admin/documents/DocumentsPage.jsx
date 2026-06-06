@@ -16,11 +16,13 @@ export default function DocumentsPage() {
   const [editingItem, setEditingItem] = useState(undefined);
   const [searchQuery, setSearchQuery] = useState('');
 
-  const fetchDocs = (targetPage, search) => {
+  const fetchDocs = (targetPage, withSearch) => {
     const p = targetPage ?? page;
     const params = { page: p, size: PAGE_SIZE };
-    const q = search ?? searchQuery;
-    if (q) params.search = q;
+    if (withSearch) {
+      const q = searchQuery.trim();
+      if (q && q.length >= 3) params.searchText = q;
+    }
     setLoading(true);
     setError(null);
     xdocuments.list(params)
@@ -85,24 +87,46 @@ export default function DocumentsPage() {
           onCancel={() => setEditingItem(undefined)}
         />
       ) : (
-        <><div className="flex items-center gap-3 mb-4">
-          <div className="relative flex-1 max-w-md">
-            <input type="text" value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') fetchDocs(1); }}
-              placeholder="Search documents…" className="field-input pr-10" />
-            <button onClick={() => fetchDocs(1)}
-              className="absolute right-1 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center
-                rounded-md hover:bg-[#e8edf7] transition-colors text-slate-400 hover:text-[#1e2d4a]">
-              <Icon name="search" size={16} color="currentColor" />
-            </button>
+        <><div className="flex items-center justify-between gap-3 px-4 py-2 bg-[#f4f6fb] border-b border-slate-200 rounded-t-xl">
+          <div className="flex items-center gap-2">
+            <div className="relative w-64">
+              <input type="text" value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') fetchDocs(1, true); }}
+                placeholder="Search documents…" className="field-input pr-16 text-[13px]" />
+              <button onClick={() => fetchDocs(1, true)} disabled={searchQuery.trim().length < 3}
+                className="absolute right-1 top-1/2 -translate-y-1/2 w-7 h-7 flex items-center justify-center
+                  rounded-md hover:bg-[#e8edf7] transition-colors text-slate-400 hover:text-[#1e2d4a] disabled:opacity-30 disabled:cursor-not-allowed">
+                <Icon name="search" size={15} color="currentColor" />
+              </button>
+              {searchQuery && (
+                <button onClick={() => { setSearchQuery(''); fetchDocs(1); }}
+                  className="absolute right-8 top-1/2 -translate-y-1/2 w-7 h-7 flex items-center justify-center
+                    rounded-md hover:bg-[#e8edf7] transition-colors text-slate-400 hover:text-[#1e2d4a]">
+                  <Icon name="close" size={14} color="currentColor" />
+                </button>
+              )}
+            </div>
           </div>
-          <button onClick={() => fetchDocs(1)} title="Refresh"
-            className="w-9 h-9 rounded-lg bg-white shadow-sm flex items-center justify-center
-              text-slate-500 hover:text-[#1e2d4a] transition-colors">
-            <Icon name="refresh" size={16} color="currentColor" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button onClick={() => fetchDocs(1, true)} title="Refresh"
+              className="w-8 h-8 rounded-lg flex items-center justify-center
+                text-slate-500 hover:text-[#1e2d4a] hover:bg-slate-200 transition-colors">
+              <Icon name="refresh" size={16} color="currentColor" />
+            </button>
+            <div className="flex items-center gap-1 pl-2 border-l border-slate-300">
+              <button disabled={page <= 1} onClick={() => setPage(page - 1)}
+                className="w-7 h-7 rounded flex items-center justify-center text-slate-500 hover:bg-slate-200 disabled:text-slate-300 disabled:cursor-not-allowed transition-colors">
+                <Icon name="chev_l" size={15} color="currentColor" />
+              </button>
+              <span className="text-[12px] text-slate-500 font-medium px-1 whitespace-nowrap">Page {page} of {totalPages}</span>
+              <button disabled={page >= totalPages} onClick={() => setPage(page + 1)}
+                className="w-7 h-7 rounded flex items-center justify-center text-slate-500 hover:bg-slate-200 disabled:text-slate-300 disabled:cursor-not-allowed transition-colors">
+                <Icon name="chev_r" size={15} color="currentColor" />
+              </button>
+            </div>
+          </div>
         </div>
-        <div className="crud-table-wrap">
+        <div className="crud-table-wrap" style={{borderTopLeftRadius:0, borderTopRightRadius:0}}>
           <div className="overflow-x-auto">
             <table className="crud-table">
               <thead className="crud-thead">
@@ -123,7 +147,7 @@ export default function DocumentsPage() {
                     <tr className="crud-row">
                       <td className="crud-state-row" colSpan={7}>
                         <p className="crud-error-text">Failed to load documents</p>
-                        <button onClick={() => { setPage(1); fetchDocs(); }} className="crud-retry-btn">Retry</button>
+                        <button onClick={() => { setPage(1); fetchDocs(1, true); }} className="crud-retry-btn">Retry</button>
                       </td>
                     </tr>
                   ) : items.length === 0 ? (
