@@ -1,8 +1,10 @@
 // src/components/admin/AdminSidebar.jsx
+import { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import Icon from '../shared/Icon';
 import Logo from '../shared/Logo';
 import { ADMIN_NAV } from '../../constants/adminNav';
+import { useDataCache } from '../../contexts/DataCache';
 
 function SectionLabel({ text }) {
   return (
@@ -16,6 +18,13 @@ export default function AdminSidebar({ open, setOpen }) {
   const navigate  = useNavigate();
   const location  = useLocation();
   const active    = location.pathname.split('/').pop() || 'documents';
+  const { reloadData } = useDataCache();
+  const [reloading, setReloading] = useState(false);
+
+  const handleReload = () => {
+    setReloading(true);
+    reloadData().finally(() => setReloading(false));
+  };
 
   const go = (id) => {
     navigate(`/admin/${id}`);
@@ -58,6 +67,15 @@ export default function AdminSidebar({ open, setOpen }) {
         </nav>
 
         <div className="border-t border-white/[0.07] py-2 shrink-0">
+          <button
+            onClick={handleReload}
+            disabled={reloading}
+            className="w-full flex items-center gap-3 px-5 py-2.5 text-white/40
+              hover:text-white hover:bg-white/5 transition-all text-[13px] disabled:opacity-40"
+          >
+            <Icon name="refresh" size={16} />
+            <span>{reloading ? 'Updating…' : 'Update Data'}</span>
+          </button>
           <button
             onClick={() => navigate('/')}
             className="w-full flex items-center gap-3 px-5 py-2.5 text-white/40

@@ -19,53 +19,73 @@ async function request(path, options = {}) {
 }
 
 export const normTypes = {
-  list:  (params = {}) => request('/norm-type' + toQuery(params)),
-  get:   (id)         => request(`/norm-type/${id}`),
-  create:(body)       => request('/norm-type', { method: 'POST', body: JSON.stringify(body) }),
-  update:(id, body)   => request(`/norm-type/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
-  delete:(id)         => request(`/norm-type/${id}`, { method: 'DELETE' }),
+  list:  (params = {}) => request('/norm-types' + toQuery(params)),
+  get:   (id)         => request(`/norm-types/${id}`),
+  create:(body)       => request('/norm-types', { method: 'POST', body: JSON.stringify(body) }),
+  update:(id, body)   => request(`/norm-types/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+  delete:(id)         => request(`/norm-types/${id}`, { method: 'DELETE' }),
 };
 
 export const entityTypes = {
-  list:  (params = {}) => request('/entity-type' + toQuery(params)),
-  get:   (id)         => request(`/entity-type/${id}`),
-  create:(body)       => request('/entity-type', { method: 'POST', body: JSON.stringify(body) }),
-  update:(id, body)   => request(`/entity-type/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
-  delete:(id)         => request(`/entity-type/${id}`, { method: 'DELETE' }),
+  list:  (params = {}) => request('/entity-types' + toQuery(params)),
+  get:   (id)         => request(`/entity-types/${id}`),
+  create:(body)       => request('/entity-types', { method: 'POST', body: JSON.stringify(body) }),
+  update:(id, body)   => request(`/entity-types/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+  delete:(id)         => request(`/entity-types/${id}`, { method: 'DELETE' }),
 };
 
 export const themes = {
-  list:  (params = {}) => request('/theme' + toQuery(params)),
-  get:   (id)         => request(`/theme/${id}`),
-  create:(body)       => request('/theme', { method: 'POST', body: JSON.stringify(body) }),
-  update:(id, body)   => request(`/theme/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
-  delete:(id)         => request(`/theme/${id}`, { method: 'DELETE' }),
+  list:  (params = {}) => request('/themes' + toQuery(params)),
+  get:   (id)         => request(`/themes/${id}`),
+  create:(body)       => request('/themes', { method: 'POST', body: JSON.stringify(body) }),
+  update:(id, body)   => request(`/themes/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+  delete:(id)         => request(`/themes/${id}`, { method: 'DELETE' }),
 };
 
 export const subthemes = {
-  list:  (themeId, params = {}) => request(`/subtheme/theme/${themeId}` + toQuery(params)),
-  get:   (id)         => request(`/subtheme/${id}`),
-  create:(body)       => request('/subtheme', { method: 'POST', body: JSON.stringify(body) }),
-  update:(id, body)   => request(`/subtheme/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
-  delete:(id)         => request(`/subtheme/${id}`, { method: 'DELETE' }),
+  list:  (themeId, params = {}) => request(`/subthemes/themes/${themeId}` + toQuery(params)),
+  get:   (id)         => request(`/subthemes/${id}`),
+  create:(body)       => request('/subthemes', { method: 'POST', body: JSON.stringify(body) }),
+  update:(id, body)   => request(`/subthemes/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+  delete:(id)         => request(`/subthemes/${id}`, { method: 'DELETE' }),
 };
 
 export const entities = {
-  list:  (params = {}) => request('/entity' + toQuery(params)),
-  get:   (id)         => request(`/entity/${id}`),
-  create:(body)       => request('/entity', { method: 'POST', body: JSON.stringify(body) }),
-  update:(id, body)   => request(`/entity/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
-  delete:(id)         => request(`/entity/${id}`, { method: 'DELETE' }),
+  list:  (params = {}) => request('/entities' + toQuery(params)),
+  get:   (id)         => request(`/entities/${id}`),
+  create:(body)       => request('/entities', { method: 'POST', body: JSON.stringify(body) }),
+  update:(id, body)   => request(`/entities/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+  delete:(id)         => request(`/entities/${id}`, { method: 'DELETE' }),
 };
 
 export const documents = {
-  list:  (params = {}) => request('/document' + toQuery(params)),
-  get:   (id)         => request(`/document/${id}`),
-  create:(body)       => request('/document', { method: 'POST', body: JSON.stringify(body) }),
-  update:(id, body)   => request(`/document/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
-  delete:(id)         => request(`/document/${id}`, { method: 'DELETE' }),
+  list:  (params = {}) => request('/documents' + toQuery(params)),
+  get:   (id)         => request(`/documents/${id}`),
+  create:(body)       => request('/documents', { method: 'POST', body: JSON.stringify(body) }),
+  update:(id, body)   => request(`/documents/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+  delete:(id)         => request(`/documents/${id}`, { method: 'DELETE' }),
 };
 
-export const helpers = {
-  entityByIds: (ids) => request('/helpers/entity/by-ids', { method: 'POST', body: JSON.stringify({ ids }) }),
+export const xentities = {
+  list:  (params = {}) => request('/xentities' + toQuery(params)),
 };
+
+export const xdocuments = {
+  list:  (params = {}) => request('/xdocuments' + toQuery(params)),
+};
+
+export const documentEntities = {
+  list:  (docId)           => request(`/documents/${docId}/entities`),
+  create:(docId, body)     => request(`/documents/${docId}/entities`, { method: 'POST', body: JSON.stringify(body) }),
+  update:(docId, entityDocId, body) => request(`/documents/${docId}/entities/${entityDocId}`, { method: 'PUT', body: JSON.stringify(body) }),
+  delete:(docId, entityId) => request(`/documents/${docId}/entities/${entityId}`, { method: 'DELETE' }),
+};
+
+export const xsubthemes = {
+  list:  (docId, params = {}) => request(`/documents/${docId}/xsubthemes` + toQuery(params)),
+};
+
+export const documentSubthemes = {
+  create:(docId, body) => request(`/documents/${docId}/subthemes`, { method: 'POST', body: JSON.stringify(body) }),
+};
+

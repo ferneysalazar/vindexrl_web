@@ -4,7 +4,7 @@ import { Section, Field, Select } from './fields';
 import EntitiesField from './EntitiesField';
 import ThemesField from './ThemesField';
 import { CHARSETS, DESC_MAX, uid } from './referenceData';
-import { documentEntities } from '../../../../services/api';
+import { documentEntities, xsubthemes, documentSubthemes } from '../../../../services/api';
 import { useDataCache } from '../../../../contexts/DataCache';
 
 const CURRENT_YEAR = new Date().getFullYear();
@@ -14,7 +14,7 @@ export default function DocumentForm({ item, onSave, onCancel }) {
 
   const initStr = (val) => val ?? '';
 
-  const { normNames, normNameToId, entityList } = useDataCache();
+  const { normNames, normNameToId, entityList, themeNames, themeTree, themeNameToId, subthemeList } = useDataCache();
   const entityNameToId = Object.fromEntries(entityList.map(e => [e.name, e.id]));
   const entityIdToName = Object.fromEntries(entityList.map(e => [e.id, e.name]));
   const entityNames = entityList.map(e => e.name);
@@ -38,6 +38,10 @@ export default function DocumentForm({ item, onSave, onCancel }) {
   const [savedEntities, setSavedEntities] = useState([]);
   const [entitiesLoading, setEntitiesLoading] = useState(isEdit);
   const [entitySaving, setEntitySaving] = useState(false);
+  const [showEntityPopup, setShowEntityPopup] = useState(false);
+  const [popupEntityId, setPopupEntityId] = useState(null);
+  const [popupMode, setPopupMode] = useState('add');
+  const [popupOriginalValue, setPopupOriginalValue] = useState('');
 
   useEffect(() => {
     if (!isEdit) return;
@@ -63,6 +67,16 @@ export default function DocumentForm({ item, onSave, onCancel }) {
       })
       .finally(() => setEntitiesLoading(false));
   }, [isEdit, item?.id, entityList]);
+
+  useEffect(() => {
+    if (!isEdit) return;
+    xsubthemes.list(item.id, { page: 1, size: 10 })
+      .then(res => {
+        const data = res?.data ?? [];
+        setThemeRows(data.map(s => ({ id: uid(), theme: s.themeName, sub: s.subthemeName, detail: s.detail })));
+      })
+      .catch(() => {});
+  }, [isEdit, item?.id]);
 
   const clearError = (field) => setFieldErrors(prev => ({ ...prev, [field]: '' }));
 
@@ -187,9 +201,9 @@ export default function DocumentForm({ item, onSave, onCancel }) {
 
   const handleRowUpdate = async (localId) => {
     const entity = entities.find(e => e.id === localId);
-    if (!entity || !entity.value || !isEdit || !item?.id) return;
+    if (!entity || !entity.value || !isEdit || !item?.id) return false;
     const eid = entityNameToId[entity.value];
-    if (!eid) return;
+    if (!eid) return false;
     setEntitySaving(true);
     try {
       if (entity.docEntityId) {
@@ -198,11 +212,18 @@ export default function DocumentForm({ item, onSave, onCancel }) {
         await documentEntities.create(item.id, { entityId: eid });
       }
       await syncEntitiesFromServer();
+      return true;
     } catch (e) {
       setSaveError('Error saving entity: ' + e.message);
+      return false;
     } finally {
       setEntitySaving(false);
     }
+  };
+
+  const handlePopupUpdate = async (entityId) => {
+    const ok = await handleRowUpdate(entityId);
+    if (ok) setShowEntityPopup(false);
   };
 
   const handleRowDelete = async (entityId) => {
@@ -222,6 +243,22 @@ export default function DocumentForm({ item, onSave, onCancel }) {
     }
   };
 
+  const handleRowEdit = (entity) => {
+    setPopupEntityId(entity.id);
+    setPopupOriginalValue(entity.value);
+    setPopupMode('edit');
+    setShowEntityPopup(true);
+  };
+
+  const handlePopupCancel = (entityId) => {
+    if (popupMode === 'edit') {
+      setEntities(prev => prev.map(e => e.id === entityId ? { ...e, value: popupOriginalValue } : e));
+    } else {
+      setEntities(prev => prev.filter(e => e.id !== entityId));
+    }
+    setShowEntityPopup(false);
+  };
+
   const handleRowCancel = (entityId) => {
     const saved = savedEntities.find(e => e.id === entityId);
     if (saved) {
@@ -231,6 +268,21 @@ export default function DocumentForm({ item, onSave, onCancel }) {
         const filtered = prev.filter(e => e.id !== entityId);
         return filtered.length ? filtered : [{ id: uid(), value: '' }];
       });
+    }
+  };
+
+  const handleAddSubtheme = async ({ theme, sub, detail }) => {
+    if (!isEdit || !item?.id) return;
+    const themeId = themeNameToId?.[theme];
+    const subthemeId = themeId
+      ? subthemeList.find(s => s.name === sub && s.themeId === themeId)?.id
+      : undefined;
+    if (!subthemeId) return;
+    try {
+      await documentSubthemes.create(item.id, { detail: detail || null, subthemeId, remarks: null });
+      setThemeRows(prev => [...prev, { id: uid(), theme, sub, detail }]);
+    } catch (e) {
+      setSaveError('Error adding subtheme: ' + e.message);
     }
   };
 
@@ -293,26 +345,58 @@ export default function DocumentForm({ item, onSave, onCancel }) {
         <div className="flex flex-col gap-4">
           <div className={!isEdit ? 'diagonal-pattern rounded-lg p-3 -mx-3' : ''}>
             <Field label="Publisher Entity" required
-              hint={!isEdit ? 'Save the document first, then edit to assign entities.' : 'Usually one. Click "Multiple" to add and list several entities inline.'}>
+              hint={!isEdit ? 'Save the document first, then edit to assign entities.' : undefined}>
               {entitiesLoading ? (
                 <div className="field-input flex items-center text-slate-400 text-[13px]">Loading entities…</div>
               ) : (
                 <EntitiesField
                   entities={entities}
-                  setEntities={setEntities}
                   disabled={!isEdit}
-                  entitiesChanged={entitiesChanged}
-                  onUpdateEntity={handleEntityUpdate}
-                  onCancelEntity={handleEntityCancel}
-                  onRowUpdate={handleRowUpdate}
                   onRowDelete={handleRowDelete}
-                  onRowCancel={handleRowCancel}
+                  onAddEntity={() => {
+                    const newEntity = { id: uid(), value: '' };
+                    setEntities(prev => [...prev, newEntity]);
+                    setPopupEntityId(newEntity.id);
+                    setPopupMode('add');
+                    setShowEntityPopup(true);
+                  }}
+                  onRowEdit={handleRowEdit}
                   saving={entitySaving}
-                  entityOptions={entityNames}
                 />
               )}
             </Field>
           </div>
+
+          {showEntityPopup && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+              <div className="bg-white rounded-xl shadow-xl p-8 w-full max-w-lg mx-4" onClick={e => e.stopPropagation()}>
+                <h3 className="text-[16px] font-bold text-[#1e2d4a] mb-5">Add/Modify Publisher Entity</h3>
+                <div className="flex flex-col gap-4">
+                  <div className="relative">
+                    <select value={entities.find(e => e.id === popupEntityId)?.value ?? ''} onChange={e => {
+                      setEntities(prev => prev.map(ent => ent.id === popupEntityId ? { ...ent, value: e.target.value } : ent));
+                    }} disabled={!isEdit}
+                      className="field-input appearance-none cursor-pointer pr-9 bg-white disabled:opacity-50 disabled:cursor-not-allowed w-full">
+                      <option value="">Select entity…</option>
+                      {entityNames.map(o => <option key={o} value={o}>{o}</option>)}
+                    </select>
+                    <Icon name="chev_d" size={16} color="#9aa3bd"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  </div>
+                  <div className="flex items-center gap-3 justify-end">
+                    <button onClick={() => handlePopupCancel(popupEntityId)}
+                      className="px-5 py-2.5 rounded-lg border border-slate-300 text-slate-500 text-[13px] font-bold hover:bg-slate-50 transition-colors">
+                      Cancel
+                    </button>
+                    <button onClick={() => handlePopupUpdate(popupEntityId)} disabled={entitySaving || !entities.find(e => e.id === popupEntityId)?.value}
+                      className="px-5 py-2.5 rounded-lg bg-[#c0392b] text-white text-[13px] font-bold hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed">
+                      Update document entity
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Field label="Issued Date">
               <input type="date" value={issueDate} onChange={e => { setIssue(e.target.value); clearError('issueDate'); }} className="field-input" />
@@ -327,7 +411,7 @@ export default function DocumentForm({ item, onSave, onCancel }) {
       <Section icon="themes" title="Themes & Subthemes" sub="Classify the document by theme and subtheme" disabled={!isEdit}>
         <Field label="Themes & Subthemes"
           hint={'Shows the first assignment. Click \u201cDetails\u201d to view, add or remove all theme / subtheme records.'}>
-          <ThemesField rows={themeRows} setRows={setThemeRows} disabled={!isEdit} />
+          <ThemesField rows={themeRows} setRows={setThemeRows} disabled={!isEdit} themeNames={themeNames} themeTree={themeTree} onAdd={handleAddSubtheme} />
         </Field>
       </Section>
 

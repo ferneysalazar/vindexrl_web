@@ -37,13 +37,17 @@ export default function DocumentsPage() {
   useEffect(() => { fetchDocs(); }, [page]);
 
   const handleSave = async (payload) => {
+    let docId;
     if (editingItem) {
       await documents.update(editingItem.id, payload);
+      docId = editingItem.id;
     } else {
-      await documents.create(payload);
+      const res = await documents.create(payload);
+      docId = res?.id ?? res?.data?.id;
     }
     setEditingItem(undefined);
     fetchDocs(1);
+    return docId;
   };
 
   const handleDelete = async (id) => {

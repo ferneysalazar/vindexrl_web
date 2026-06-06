@@ -8,9 +8,11 @@ import EntitiesPage from './pages/admin/entities/EntitiesPage';
 import ThemesPage from './pages/admin/themes/ThemesPage';
 import PlaceholderAdminPage from './pages/admin/PlaceholderAdminPage';
 import IconsPage from './pages/tools/IconsPage';
+import { DataCacheProvider } from './contexts/DataCache';
 
 export default function App() {
   return (
+    <DataCacheProvider>
     <BrowserRouter>
       <Routes>
         <Route path="/*" element={<PublicApp />} />
@@ -25,5 +27,6 @@ export default function App() {
         </Route>
       </Routes>
     </BrowserRouter>
+    </DataCacheProvider>
   );
 }

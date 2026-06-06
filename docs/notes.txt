@@ -1,0 +1,56 @@
+1. Client  
+    have multiple users
+    have multiple issued (expedidoras)entities license
+    have configured multiple issued (expedidoras)entities of interest
+
+
+2. Document
+    Has a Doc
+    Has an HTML
+    Has a pdf
+    Images/... If the html have images (the html images)
+
+
+3. one document has multiple entities issuing
+
+4. Admin
+
+5. Vinculos. Un link es un id to the link table:
+
+    Es un id apuntando a un set the ids hijos regularmente solo un hijo.
+    1. linkSetId
+    2. sourceDocId:
+    
+    linkSetElements:
+    1. linkSetId
+    2. linkelementId
+    3. targetDocId: 
+    4. linkType: 
+        Inline over the text,: Example: modificado por el articulo 345 de la <span id="vindexRl-230928390283HKDSR12"> ley 801 de 2025</span>
+        Inline added. Its a text with the link added where the span tag with  id vindexRl-xxx is. 
+        Block. Its a div with the text inside it.
+    5. Text of the link
+    6. externalLink boolean
+    7. externalUrl If it is external link, then the URL to the external link. (in this case the targetDocId doesnt have ineffective)
+
+
+
+6. Index por palabras para busqueda avanzada (elastic)
+
+7. Vinculos de un pdf header facil
+    inline difficult 2 weeks
+    
+
+
+Documents by page.
+
+
+Migracion: Regimen LEgal
+
+1. Tener una opcion de reemplaazr un documento existente
+
+2. Tomar los documentos, y los temas y migrarlos
+
+3. Migracion ambiente. tomar los documentos y migrarlos.
+
+3. Perfeccionar el scanner to html
