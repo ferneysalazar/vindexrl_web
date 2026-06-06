@@ -1,45 +1,26 @@
-import { useState } from 'react';
 import Icon from '../../../../components/shared/Icon';
-import { uid } from './referenceData';
 
-export default function ThemesField({ rows, setRows, disabled, themeNames, themeTree, onAdd, onRemove }) {
-  const [theme, setTheme] = useState('');
-  const [sub, setSub]     = useState('');
-  const [detail, setDetail] = useState('');
-
-  const addRow = () => {
-    if (disabled || !theme || !sub) return;
-    if (onAdd) {
-      onAdd({ theme, sub, detail });
-    } else {
-      setRows(prev => [...prev, { id: uid(), theme, sub, detail }]);
-    }
-    setTheme(''); setSub(''); setDetail('');
-  };
-  const removeRow = (id) => {
-    if (disabled) return;
-    if (onRemove) {
-      onRemove(id);
-    } else {
-      setRows(prev => prev.filter(r => r.id !== id));
-    }
-  };
-
+export default function ThemesField({ rows, disabled, themeNames, themeTree, onAdd, onEdit, onDelete }) {
   return (
     <div className="border border-[#e2e6ef] rounded-xl overflow-hidden">
+      <div className="flex items-center justify-between px-4 pt-3 pb-1">
+        <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">
+          {rows.length} Subtheme{rows.length !== 1 ? 's' : ''}
+        </span>
+      </div>
       <table className="w-full border-collapse">
         <thead>
           <tr className="bg-[#f4f6fb]">
             <th className="px-4 py-2.5 text-left text-[10px] font-black uppercase tracking-[0.08em] text-slate-400 w-10">#</th>
             <th className="px-4 py-2.5 text-left text-[10px] font-black uppercase tracking-[0.08em] text-slate-400">Theme / Subtheme</th>
             <th className="px-4 py-2.5 text-left text-[10px] font-black uppercase tracking-[0.08em] text-slate-400">Detail</th>
-            <th className="px-4 py-2.5 w-12"></th>
+            <th className="px-4 py-2.5 w-24"></th>
           </tr>
         </thead>
         <tbody>
           {rows.length === 0 ? (
             <tr><td colSpan={4} className="px-4 py-6 text-center text-slate-400 text-[12px]">
-              No themes added. Use the row below to assign one.
+              No themes added.
             </td></tr>
           ) : rows.map((r, i) => (
             <tr key={r.id} className="border-t border-slate-100">
@@ -55,44 +36,30 @@ export default function ThemesField({ rows, setRows, disabled, themeNames, theme
                 </span>
               </td>
               <td className="px-4 py-3">
-                <button onClick={() => removeRow(r.id)} disabled={disabled}
-                  className="w-7 h-7 rounded-md flex items-center justify-center text-[#c0392b] hover:bg-[#c0392b]/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
-                  <Icon name="trash" size={13} color="currentColor" />
-                </button>
+                <div className="flex items-center gap-1">
+                  {onEdit && (
+                    <button onClick={() => onEdit(r)} disabled={disabled}
+                      className="w-7 h-7 rounded-md flex items-center justify-center text-slate-400 hover:text-[#1e2d4a] hover:bg-slate-100 transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
+                      <Icon name="edit" size={13} color="currentColor" />
+                    </button>
+                  )}
+                  <button onClick={() => onDelete(r.id)} disabled={disabled}
+                    className="w-7 h-7 rounded-md flex items-center justify-center text-[#c0392b] hover:bg-[#c0392b]/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
+                    <Icon name="trash" size={13} color="currentColor" />
+                  </button>
+                </div>
               </td>
             </tr>
           ))}
         </tbody>
       </table>
-      <div className={`border-t border-slate-100 bg-[#f9fafc] p-3 flex flex-col gap-2 ${disabled ? 'opacity-40' : ''}`}>
-        <div className="flex items-center gap-2">
-          <div className="relative flex-1">
-            <select value={theme} onChange={e => { setTheme(e.target.value); setSub(''); }}
-              disabled={disabled}
-              className="field-input appearance-none cursor-pointer pr-9 bg-white disabled:opacity-50 disabled:cursor-not-allowed">
-              <option value="">Select theme…</option>
-              {(themeNames ?? []).map(t => <option key={t} value={t}>{t}</option>)}
-            </select>
-            <Icon name="chev_d" size={16} color="#9aa3bd"
-              className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-          </div>
-          <div className="relative flex-1">
-            <select value={sub} onChange={e => setSub(e.target.value)} disabled={disabled || !theme}
-              className="field-input appearance-none cursor-pointer pr-9 bg-white disabled:opacity-50 disabled:cursor-not-allowed">
-              <option value="">{theme ? 'Select subtheme…' : 'Pick theme first'}</option>
-                  {theme && (themeTree?.[theme] ?? []).map(s => <option key={s} value={s}>{s}</option>)}
-            </select>
-            <Icon name="chev_d" size={16} color="#9aa3bd"
-              className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-          </div>
-          <button onClick={addRow} disabled={disabled || !theme || !sub}
-            className={`px-4 py-2.5 rounded-lg text-[12px] font-bold tracking-wide shrink-0 transition-all
-              ${disabled || !theme || !sub ? 'bg-slate-100 text-slate-300 cursor-not-allowed' : 'bg-[#c0392b] text-white hover:opacity-90'}`}>
-            ADD
-          </button>
-        </div>
-        <textarea value={detail} onChange={e => setDetail(e.target.value)} rows={2} disabled={disabled}
-          placeholder="Detail (optional)…" className="field-input resize-none" />
+      <div className="border-t border-slate-100 bg-[#f9fafc] p-3">
+        <button onClick={onAdd} disabled={disabled}
+          className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-dashed border-[#c0392b]/40
+            text-[#c0392b] text-[12px] font-bold hover:bg-[#c0392b]/5 transition-colors w-full justify-center
+            disabled:opacity-40 disabled:cursor-not-allowed">
+          <Icon name="plus" size={14} color="currentColor" /> Add a new subtheme
+        </button>
       </div>
     </div>
   );

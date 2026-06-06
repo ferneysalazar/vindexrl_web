@@ -112,28 +112,30 @@ export default function DocumentsPage() {
                   <th className="crud-th">Year</th>
                   <th className="crud-th">DocumentType</th>
                   <th className="crud-th">Document</th>
+                  <th className="crud-th" style={{width:'6rem', textAlign:'center'}}>Subthemes</th>
                   <th className="crud-th" style={{width:'7rem', textAlign:'center'}}>Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {loading ? (
-                  <tr className="crud-row"><td className="crud-state-row" colSpan={6}>Loading…</td></tr>
-                ) : error ? (
-                  <tr className="crud-row">
-                    <td className="crud-state-row" colSpan={6}>
-                      <p className="crud-error-text">Failed to load documents</p>
-                      <button onClick={() => { setPage(1); fetchDocs(); }} className="crud-retry-btn">Retry</button>
-                    </td>
-                  </tr>
-                ) : items.length === 0 ? (
-                  <tr className="crud-row"><td className="crud-state-row" colSpan={6}>No documents yet.</td></tr>
-                ) : items.map((item, i) => (
-                  <tr key={item.id} className="crud-row">
-                    <td className="crud-td-mono">{(page - 1) * PAGE_SIZE + i + 1}</td>
-                    <td className="crud-td-label">{item.number}</td>
-                    <td className="crud-td-label">{item.year}</td>
-                    <td className="crud-td-label">{item.normTypeName}</td>
-                    <td className="crud-td-label" style={{maxWidth:'20rem', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{item.documentName}{item.entityCount > 1 ? <span className="text-[#c0392b] cursor-default" title={`This document has ${item.entityCount} entities`}> [+{item.entityCount - 1}]</span> : ''}</td>
+                  {loading ? (
+                    <tr className="crud-row"><td className="crud-state-row" colSpan={7}>Loading…</td></tr>
+                  ) : error ? (
+                    <tr className="crud-row">
+                      <td className="crud-state-row" colSpan={7}>
+                        <p className="crud-error-text">Failed to load documents</p>
+                        <button onClick={() => { setPage(1); fetchDocs(); }} className="crud-retry-btn">Retry</button>
+                      </td>
+                    </tr>
+                  ) : items.length === 0 ? (
+                    <tr className="crud-row"><td className="crud-state-row" colSpan={7}>No documents yet.</td></tr>
+                  ) : items.map((item, i) => (
+                    <tr key={item.id} className="crud-row">
+                      <td className="crud-td-mono">{(page - 1) * PAGE_SIZE + i + 1}</td>
+                      <td className="crud-td-label">{item.number}</td>
+                      <td className="crud-td-label">{item.year}</td>
+                      <td className="crud-td-label">{item.normTypeName}</td>
+                      <td className="crud-td-label" style={{maxWidth:'20rem', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{item.documentName}{item.entityCount > 1 ? <span className="text-[#c0392b] cursor-default" title={`This document has ${item.entityCount} entities`}> [+{item.entityCount - 1}]</span> : ''}</td>
+                      <td className="crud-td-label" style={{textAlign:'center'}}>{item.subthemeCount ?? 0}</td>
                     <td className="crud-td-actions">
                       <div className="btn-wrap">
                         <button onClick={() => setEditingItem(item)} title="Edit" className="btn-edit">

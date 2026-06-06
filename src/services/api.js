@@ -87,5 +87,7 @@ export const xsubthemes = {
 
 export const documentSubthemes = {
   create:(docId, body) => request(`/documents/${docId}/subthemes`, { method: 'POST', body: JSON.stringify(body) }),
+  update:(docId, subthemeId, body) => request(`/documents/${docId}/subthemes/${subthemeId}`, { method: 'PUT', body: JSON.stringify(body) }),
+  delete:(docId, subthemeId) => request(`/documents/${docId}/subthemes/${subthemeId}`, { method: 'DELETE' }),
 };
 

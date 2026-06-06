@@ -43,6 +43,11 @@ export default function DocumentForm({ item, onSave, onCancel }) {
   const [popupMode, setPopupMode] = useState('add');
   const [popupOriginalValue, setPopupOriginalValue] = useState('');
 
+  const [showSubthemePopup, setShowSubthemePopup] = useState(false);
+  const [subthemePopupMode, setSubthemePopupMode] = useState('add');
+  const [subthemePopupRowId, setSubthemePopupRowId] = useState(null);
+  const [subthemeForm, setSubthemeForm] = useState({ theme: '', sub: '', detail: '' });
+
   useEffect(() => {
     if (!isEdit) return;
     setEntitiesLoading(true);
@@ -73,7 +78,7 @@ export default function DocumentForm({ item, onSave, onCancel }) {
     xsubthemes.list(item.id, { page: 1, size: 10 })
       .then(res => {
         const data = res?.data ?? [];
-        setThemeRows(data.map(s => ({ id: uid(), theme: s.themeName, sub: s.subthemeName, detail: s.detail })));
+        setThemeRows(data.map(s => ({ id: uid(), theme: s.themeName, sub: s.subthemeName, detail: s.detail, docSubthemeId: s.id })));
       })
       .catch(() => {});
   }, [isEdit, item?.id]);
@@ -271,19 +276,69 @@ export default function DocumentForm({ item, onSave, onCancel }) {
     }
   };
 
-  const handleAddSubtheme = async ({ theme, sub, detail }) => {
-    if (!isEdit || !item?.id) return;
-    const themeId = themeNameToId?.[theme];
-    const subthemeId = themeId
-      ? subthemeList.find(s => s.name === sub && s.themeId === themeId)?.id
+  const resolveSubthemeId = (themeName, subName) => {
+    const themeId = themeNameToId?.[themeName];
+    return themeId
+      ? subthemeList.find(s => s.name === subName && s.themeId === themeId)?.id
       : undefined;
+  };
+
+  const handleOpenAddSubtheme = () => {
+    setSubthemeForm({ theme: '', sub: '', detail: '' });
+    setSubthemePopupMode('add');
+    setSubthemePopupRowId(null);
+    setShowSubthemePopup(true);
+  };
+
+  const handleOpenEditSubtheme = (row) => {
+    setSubthemeForm({ theme: row.theme, sub: row.sub, detail: row.detail ?? '' });
+    setSubthemePopupMode('edit');
+    setSubthemePopupRowId(row.id);
+    setShowSubthemePopup(true);
+  };
+
+  const handleSaveSubtheme = async () => {
+    if (!isEdit || !item?.id || !subthemeForm.theme || !subthemeForm.sub) return;
+    const subthemeId = resolveSubthemeId(subthemeForm.theme, subthemeForm.sub);
     if (!subthemeId) return;
+    const body = { detail: subthemeForm.detail || null, subthemeId, remarks: null };
     try {
-      await documentSubthemes.create(item.id, { detail: detail || null, subthemeId, remarks: null });
-      setThemeRows(prev => [...prev, { id: uid(), theme, sub, detail }]);
+      if (subthemePopupMode === 'edit') {
+        const row = themeRows.find(r => r.id === subthemePopupRowId);
+        if (row?.docSubthemeId) {
+          await documentSubthemes.update(item.id, row.docSubthemeId, body);
+        }
+        setThemeRows(prev => prev.map(r =>
+          r.id === subthemePopupRowId
+            ? { ...r, theme: subthemeForm.theme, sub: subthemeForm.sub, detail: subthemeForm.detail }
+            : r
+        ));
+      } else {
+        const res = await documentSubthemes.create(item.id, body);
+        setThemeRows(prev => [...prev, { id: uid(), theme: subthemeForm.theme, sub: subthemeForm.sub, detail: subthemeForm.detail, docSubthemeId: res?.id ?? res?.data?.id }]);
+      }
+      setShowSubthemePopup(false);
     } catch (e) {
-      setSaveError('Error adding subtheme: ' + e.message);
+      setSaveError('Error saving subtheme: ' + e.message);
     }
+  };
+
+  const handleDeleteSubtheme = async (rowId) => {
+    if (!isEdit || !item?.id) return;
+    const row = themeRows.find(r => r.id === rowId);
+    if (row?.docSubthemeId) {
+      try {
+        await documentSubthemes.delete(item.id, row.docSubthemeId);
+      } catch (e) {
+        setSaveError('Error deleting subtheme: ' + e.message);
+        return;
+      }
+    }
+    setThemeRows(prev => prev.filter(r => r.id !== rowId));
+  };
+
+  const handleCancelSubthemePopup = () => {
+    setShowSubthemePopup(false);
   };
 
   return (
@@ -411,9 +466,55 @@ export default function DocumentForm({ item, onSave, onCancel }) {
       <Section icon="themes" title="Themes & Subthemes" sub="Classify the document by theme and subtheme" disabled={!isEdit}>
         <Field label="Themes & Subthemes"
           hint={'Shows the first assignment. Click \u201cDetails\u201d to view, add or remove all theme / subtheme records.'}>
-          <ThemesField rows={themeRows} setRows={setThemeRows} disabled={!isEdit} themeNames={themeNames} themeTree={themeTree} onAdd={handleAddSubtheme} />
+          <ThemesField rows={themeRows} disabled={!isEdit} themeNames={themeNames} themeTree={themeTree}
+            onAdd={handleOpenAddSubtheme}
+            onEdit={handleOpenEditSubtheme}
+            onDelete={handleDeleteSubtheme} />
         </Field>
       </Section>
+
+      {showSubthemePopup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-xl shadow-xl p-8 w-full max-w-lg mx-4" onClick={e => e.stopPropagation()}>
+            <h3 className="text-[16px] font-bold text-[#1e2d4a] mb-5">Add/Modify Subtheme</h3>
+            <div className="flex flex-col gap-4">
+              <div className="relative">
+                <select value={subthemeForm.theme} onChange={e => { setSubthemeForm(prev => ({ ...prev, theme: e.target.value, sub: '' })); }}
+                  disabled={!isEdit}
+                  className="field-input appearance-none cursor-pointer pr-9 bg-white disabled:opacity-50 disabled:cursor-not-allowed w-full">
+                  <option value="">Select theme…</option>
+                  {(themeNames ?? []).map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+                <Icon name="chev_d" size={16} color="#9aa3bd"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              </div>
+              <div className="relative">
+                <select value={subthemeForm.sub} onChange={e => setSubthemeForm(prev => ({ ...prev, sub: e.target.value }))}
+                  disabled={!isEdit || !subthemeForm.theme}
+                  className="field-input appearance-none cursor-pointer pr-9 bg-white disabled:opacity-50 disabled:cursor-not-allowed w-full">
+                  <option value="">{subthemeForm.theme ? 'Select subtheme…' : 'Pick theme first'}</option>
+                  {subthemeForm.theme && (themeTree?.[subthemeForm.theme] ?? []).map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+                <Icon name="chev_d" size={16} color="#9aa3bd"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              </div>
+              <textarea value={subthemeForm.detail} onChange={e => setSubthemeForm(prev => ({ ...prev, detail: e.target.value }))}
+                rows={3} disabled={!isEdit}
+                placeholder="Detail (optional)…" className="field-input resize-none" />
+              <div className="flex items-center gap-3 justify-end">
+                <button onClick={handleCancelSubthemePopup}
+                  className="px-5 py-2.5 rounded-lg border border-slate-300 text-slate-500 text-[13px] font-bold hover:bg-slate-50 transition-colors">
+                  Cancel
+                </button>
+                <button onClick={handleSaveSubtheme} disabled={!isEdit || !subthemeForm.theme || !subthemeForm.sub}
+                  className="px-5 py-2.5 rounded-lg bg-[#c0392b] text-white text-[13px] font-bold hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed">
+                  {subthemePopupMode === 'edit' ? 'Update document subtheme' : 'Add document subtheme'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <Section icon="tag" title="Metadata" sub="Publishing media, keywords and classification">
         <div className="flex flex-col gap-4">
