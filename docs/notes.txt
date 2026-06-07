@@ -54,3 +54,19 @@ Migracion: Regimen LEgal
 3. Migracion ambiente. tomar los documentos y migrarlos.
 
 3. Perfeccionar el scanner to html
+
+
+
+Type of range selections: 
+range selection including text only not tags encolosed: { abcde }
+range selection including complete inline tags like  { ab<span>cd</span>e }
+range selection including inline tags incompletes: Example  {ab<span>c}d</span>
+range selection including complete block tags ...</div> otro { <div>ab<span>cd</span>e</div> } 
+range selection including incomplete block tags ...</div> otro { <div>ab<span>cd</span>e } </div>
+Select an insertion point inline and block
+
+I need the user can select a text range that should be wrapped by the <span vindexRL>
+If the span include incomplete tags then help him to expand the range selection to include the complete tags
+
+<note-wrapper> this initial tag will be transformed in <A href> tag when rendering phase.
+

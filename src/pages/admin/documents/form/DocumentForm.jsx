@@ -1,10 +1,11 @@
 import { useState, useEffect, useMemo } from 'react';
 import Icon from '../../../../components/shared/Icon';
+import { I } from '../../../../icons';
 import { Section, Field, Select } from './fields';
 import EntitiesField from './EntitiesField';
 import ThemesField from './ThemesField';
 import { CHARSETS, DESC_MAX, uid } from './referenceData';
-import { documentEntities, xsubthemes, documentSubthemes } from '../../../../services/api';
+import { documentEntities, xsubthemes, documentSubthemes, htmlFiles } from '../../../../services/api';
 import { useDataCache } from '../../../../contexts/DataCache';
 
 const CURRENT_YEAR = new Date().getFullYear();
@@ -84,6 +85,23 @@ export default function DocumentForm({ item, onSave, onCancel }) {
   }, [isEdit, item?.id]);
 
   const clearError = (field) => setFieldErrors(prev => ({ ...prev, [field]: '' }));
+
+  const handleOpenHtmlEditor = () => {
+    window.open('/html-files/example1', '_blank');
+  };
+
+  useEffect(() => {
+    const handleMessage = async (event) => {
+      if (event.data?.type !== 'vrl-save') return;
+      try {
+        await htmlFiles.save('example1', event.data.content);
+      } catch (e) {
+        setSaveError('Error saving HTML: ' + e.message);
+      }
+    };
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, []);
 
   const initialValues = useMemo(() => ({
     docType: isEdit ? (item.normTypeName ?? '') : '',
@@ -343,6 +361,16 @@ export default function DocumentForm({ item, onSave, onCancel }) {
 
   return (
     <div className="flex flex-col gap-5">
+      <div className="flex items-center gap-1 px-2 py-1.5 bg-white rounded-xl shadow-sm border border-slate-100 self-start">
+        <button
+          type="button"
+          onClick={handleOpenHtmlEditor}
+          title="Open HTML Document"
+          className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 hover:text-[#1e2d4a] hover:bg-slate-100 transition-colors"
+        >
+          <I.externalLink size={16} />
+        </button>
+      </div>
       {saveError && (
         <div className="flex items-start gap-3 px-4 py-3 rounded-lg bg-[#fde8e8] border border-[#c0392b]/30 text-[#c0392b]">
           <Icon name="info" size={16} color="#c0392b" className="mt-0.5 shrink-0" />

@@ -11,6 +11,7 @@ export default defineConfig({
       '/entity':      { target: 'http://localhost:3000', changeOrigin: true, rewrite: path => '/api' + path },
       '/theme':       { target: 'http://localhost:3000', changeOrigin: true, rewrite: path => '/api' + path },
       '/subtheme':    { target: 'http://localhost:3000', changeOrigin: true, rewrite: path => '/api' + path },
+      '/html-files':  { target: 'http://localhost:3000', changeOrigin: true, rewrite: path => '/api' + path },
     },
   },
 })

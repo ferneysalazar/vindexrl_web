@@ -91,3 +91,7 @@ export const documentSubthemes = {
   delete:(docId, subthemeId) => request(`/documents/${docId}/subthemes/${subthemeId}`, { method: 'DELETE' }),
 };
 
+export const htmlFiles = {
+  save: (name, content) => request(`/html-files/${name}`, { method: 'PUT', body: JSON.stringify({ content }) }),
+};
+

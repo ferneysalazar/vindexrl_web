@@ -4,7 +4,7 @@ import Pagination from '../../../components/shared/Pagination';
 import { documents, xdocuments } from '../../../services/api';
 import DocumentForm from './form/DocumentForm';
 
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 2;
 
 export default function DocumentsPage() {
   const [items, setItems] = useState([]);
