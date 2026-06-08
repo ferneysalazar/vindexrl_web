@@ -1,11 +1,11 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import Icon from '../../../../components/shared/Icon';
 import { I } from '../../../../icons';
 import { Section, Field, Select } from './fields';
 import EntitiesField from './EntitiesField';
 import ThemesField from './ThemesField';
 import { CHARSETS, DESC_MAX, uid } from './referenceData';
-import { documentEntities, xsubthemes, documentSubthemes, htmlFiles } from '../../../../services/api';
+import { documents, xdocuments, documentEntities, xsubthemes, documentSubthemes, htmlFiles } from '../../../../services/api';
 import { useDataCache } from '../../../../contexts/DataCache';
 
 const CURRENT_YEAR = new Date().getFullYear();
@@ -86,20 +86,127 @@ export default function DocumentForm({ item, onSave, onCancel }) {
 
   const clearError = (field) => setFieldErrors(prev => ({ ...prev, [field]: '' }));
 
+  const htmlWindowRef = useRef(null);
+
   const handleOpenHtmlEditor = () => {
-    window.open('/html-files/example1', '_blank');
+    const win = window.open('/html-files/example1', '_blank');
+    htmlWindowRef.current = win;
   };
 
+  const getLinkPanel = () => {
+    const win = htmlWindowRef.current;
+    if (!win || win.closed) return null;
+    return win.document.getElementById('vrlLinkPanel');
+  };
+
+  const handleWriteOpenerRef = () => {
+    const panel = getLinkPanel();
+    if (!panel) return;
+    const label = panel.ownerDocument.createElement('div');
+    label.textContent = `Opener window reference: ${window.location.href}`;
+    panel.appendChild(label);
+    panel.style.display = 'block';
+  };
+
+  /**
+   * Cross-window messaging bridge between DocumentForm (opener) and the HTML
+   * document editor opened via window.open() (child window).
+   *
+   * Architecture:
+   *   DocumentForm  ──postMessage──▶  vrl-toolbar (child window)
+   *   DocumentForm  ◀─postMessage──  vrl-toolbar (child window)
+   *
+   * The child window cannot call the React API layer directly, so it delegates
+   * every server interaction back to this opener via postMessage. This useEffect
+   * registers a single listener that dispatches on event.data.type and acts as
+   * the API proxy for the child window.
+   *
+   * Registered message types:
+   *   • 'vrl-save'             – child requests that the current HTML content
+   *                              be persisted to the server.
+   *   • 'vrl-search-documents' – child requests a document search; this handler
+   *                              calls the API and replies with the results.
+   *
+   * The listener is registered once (empty dep array) and cleaned up on unmount
+   * to avoid duplicate handlers if the component re-renders.
+   */
   useEffect(() => {
     const handleMessage = async (event) => {
-      if (event.data?.type !== 'vrl-save') return;
-      try {
-        await htmlFiles.save('example1', event.data.content);
-      } catch (e) {
-        setSaveError('Error saving HTML: ' + e.message);
+
+      // ── vrl-save ────────────────────────────────────────────────────────────
+      // Sent by the toolbar's save button after it serialises the full HTML of
+      // the child document. We receive the raw HTML string and persist it via
+      // the htmlFiles API. No reply is needed; the child shows a colour flash
+      // on its own save button as visual confirmation.
+      if (event.data?.type === 'vrl-save') {
+        try {
+          await htmlFiles.save('example1', event.data.content);
+        } catch (e) {
+          setSaveError('Error saving HTML: ' + e.message);
+        }
+        return;
+      }
+
+      // ── vrl-search-documents ────────────────────────────────────────────────
+      // Sent by the toolbar's "Search Documents" button with the four filter
+      // values the user typed: type, number, year, entity.
+      //
+      // Endpoint: GET /xdocuments?searchText=...&documentNumber=...&page=1&size=20
+      //
+      // Param strategy:
+      //   • searchText     – all four values concatenated with a space so the
+      //                      backend full-text index can match any combination.
+      //   • documentNumber – the number field passed separately, which the
+      //                      endpoint uses for an exact numeric filter that can
+      //                      be combined with searchText.
+      //   • page / size    – always 1 / 20 for the panel list view.
+      //
+      // Flow:
+      //   1. Unpack the four values from event.data.params.
+      //   2. Build searchText and documentNumber.
+      //   3. Call xdocuments.list() — dedicated read-only search service.
+      //   4. Reply to the child window with { type: 'vrl-search-results', documents }.
+      //      The toolbar renders doc.documentName in the scrollable results list.
+      //   5. On API error reply with an empty array so the toolbar exits the
+      //      "Searching…" state and shows "No documents found".
+      if (event.data?.type === 'vrl-search-documents') {
+        const { type, number, year, entity } = event.data.params ?? {};
+
+        // Concatenate only the non-empty values so we don't send trailing spaces.
+        const searchText = [type, number, year, entity].filter(Boolean).join(' ');
+
+        const params = { page: 1, size: 20 };
+        if (searchText) params.searchText     = searchText;
+        if (number)     params.documentNumber = number;
+
+        // htmlWindowRef.current is set when the editor was opened via
+        // handleOpenHtmlEditor(). Guard against the user closing that tab
+        // while the API call is in flight.
+        const win = htmlWindowRef.current;
+        try {
+          const data = await xdocuments.list(params);
+          // The endpoint always wraps results in { data: [...] }.
+          const docs = data.data ?? [];
+          if (win && !win.closed) {
+            win.postMessage(
+              { type: 'vrl-search-results', documents: docs },
+              window.location.origin
+            );
+          }
+        } catch {
+          if (win && !win.closed) {
+            win.postMessage(
+              { type: 'vrl-search-results', documents: [] },
+              window.location.origin
+            );
+          }
+        }
       }
     };
+
     window.addEventListener('message', handleMessage);
+    // Cleanup prevents a stale handler from persisting after the form unmounts,
+    // which would cause orphaned API calls and potential state-update warnings.
     return () => window.removeEventListener('message', handleMessage);
   }, []);
 
@@ -369,6 +476,14 @@ export default function DocumentForm({ item, onSave, onCancel }) {
           className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 hover:text-[#1e2d4a] hover:bg-slate-100 transition-colors"
         >
           <I.externalLink size={16} />
+        </button>
+        <button
+          type="button"
+          onClick={handleWriteOpenerRef}
+          title="Write opener reference to panel"
+          className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 hover:text-[#1e2d4a] hover:bg-slate-100 transition-colors"
+        >
+          <I.panel size={16} />
         </button>
       </div>
       {saveError && (
