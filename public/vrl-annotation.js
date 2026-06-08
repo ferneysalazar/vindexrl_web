@@ -30,27 +30,45 @@
 
       function expandSelectionToCompleteTags() {
         const selection = window.getSelection();
-      if (!selection || selection.rangeCount === 0) return;
+        if (!selection || selection.rangeCount === 0) return;
 
-      const range = selection.getRangeAt(0);
+        const range = selection.getRangeAt(0);
+        if (range.collapsed) return;
 
-      if (range.startContainer === range.endContainer) {
+        // Resolve element nodes from the raw start/end containers (which may be text nodes).
+        const startEl = range.startContainer.nodeType === Node.TEXT_NODE
+          ? range.startContainer.parentElement
+          : range.startContainer;
+        const endEl = range.endContainer.nodeType === Node.TEXT_NODE
+          ? range.endContainer.parentElement
+          : range.endContainer;
+
+        // Walk up to the nearest semantic block for each boundary.
+        // BLOCK_SELECTOR deliberately excludes table elements (TD, TR, TABLE),
+        // so a selection confined within one cell will return null or the same block,
+        // preventing the TD from being mistakenly used as the expansion target.
+        const startBlock = startEl.closest(BLOCK_SELECTOR);
+        const endBlock   = endEl.closest(BLOCK_SELECTOR);
+
+        // If both boundaries share the same block (or no block ancestor exists),
+        // the selection is already within a single structural unit — keep it as-is.
+        if (!startBlock || !endBlock || startBlock === endBlock) {
+          console.log("⚡ Mode 1: Selection within single block — keeping exact user selection.");
           return;
         }
 
-      let commonAncestor = range.commonAncestorContainer;
-
-      if (commonAncestor.nodeType === Node.TEXT_NODE) {
-        commonAncestor = commonAncestor.parentElement;
+        // The selection genuinely spans multiple blocks — expand to their common ancestor.
+        let commonAncestor = range.commonAncestorContainer;
+        if (commonAncestor.nodeType === Node.TEXT_NODE) {
+          commonAncestor = commonAncestor.parentElement;
         }
 
-      const expandedRange = document.createRange();
-      expandedRange.selectNodeContents(commonAncestor);
+        const expandedRange = document.createRange();
+        expandedRange.selectNodeContents(commonAncestor);
+        selection.removeAllRanges();
+        selection.addRange(expandedRange);
 
-      selection.removeAllRanges();
-      selection.addRange(expandedRange);
-
-      console.log("⚡ Mode 1: Range safely expanded to complete structural tags:", commonAncestor.tagName);
+        console.log("⚡ Mode 1: Range expanded to complete structural tags:", commonAncestor.tagName);
       }
 
         function executeMode2CaretPlacement(x, y) {
@@ -171,9 +189,101 @@
         }
       });
 
+        /**
+         * Browser table cell-selection override.
+         *
+         * Root problem:
+         *   Chrome and Firefox have a built-in "table cell selection" mode that
+         *   activates when the user holds Ctrl and drags the mouse inside a <table>.
+         *   In this mode the browser highlights the entire <TD> with a border and
+         *   selects cells as atomic units instead of allowing text drag-selection.
+         *   Because no text range is created, window.getSelection().toString() is
+         *   empty on mouseup and the annotation engine's Mode 1 (expandSelection-
+         *   ToCompleteTags) never fires.
+         *
+         * Fix strategy — CSS injection / removal tied to Ctrl key lifecycle:
+         *   Injecting  `user-select: text !important` on table elements forces the
+         *   browser out of cell-selection mode and back into normal text-selection
+         *   mode for the duration the Ctrl key is held. The rule is added as a
+         *   dedicated <style> tag (not inlined) so it can be cleanly removed the
+         *   moment the key is released, restoring default browser behaviour without
+         *   leaving any residual style on the document.
+         *
+         * Why a style tag rather than inline styles:
+         *   Inline styles on individual <td> elements would require iterating every
+         *   cell at keydown time (expensive on large tables) and restoring each one
+         *   at keyup. A single injected rule covers the whole document in O(1) and
+         *   disappears atomically on removal.
+         *
+         * The null guard (`if (!ctrlSelectionStyle)`) prevents duplicate <style>
+         * tags if keydown fires repeatedly while the key is held (key-repeat).
+         */
+        let ctrlSelectionStyle = null;
+
+        /**
+         * Firefox multi-selection guard (mousedown).
+         *
+         * Unlike Chrome (which blocks text selection entirely and shows the TD
+         * border), Firefox allows text selection with Ctrl held but accumulates
+         * each drag as an additional disjoint range on top of any previous
+         * selection. This causes expandSelectionToCompleteTags() to operate on
+         * a stale multi-range Selection object, producing unexpected results.
+         *
+         * Clearing all existing ranges on Ctrl+mousedown resets the Selection to
+         * a clean state before the new drag begins, so the engine always receives
+         * exactly one fresh range on mouseup — consistent with Chrome behaviour.
+         *
+         * This handler is intentionally silent (no preventDefault / stopPropagation)
+         * so it does not interfere with the browser's ability to start a new text
+         * selection during the subsequent drag.
+         */
+        document.addEventListener('mousedown', function (event) {
+          if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey) {
+            const sel = window.getSelection();
+            if (sel && sel.rangeCount > 0) sel.removeAllRanges();
+          }
+        });
+
+        /**
+         * keydown — cursor feedback + table cell-selection override.
+         *
+         * Three mutually exclusive modifier branches:
+         *
+         *  Ctrl / Meta (no Alt, no Shift) → Mode 1 (text expand on mouseup)
+         *    - cursor: zoom-in  signals "selection will be expanded"
+         *    - injects the user-select override style described above
+         *
+         *  Alt (no Shift) → Mode 2 (precision inline caret placement on click)
+         *    - cursor: text  signals "click to place an inline anchor"
+         *
+         *  Shift (no Alt) → Mode 3 (block density placement on click)
+         *    - cursor: crosshair  signals "click to place a block-level anchor"
+         */
         document.addEventListener('keydown', function (event) {
         if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey) {
           document.body.style.cursor = 'zoom-in';
+
+          // Inject the override only once; keydown repeats while the key is held.
+          if (!ctrlSelectionStyle) {
+            ctrlSelectionStyle = document.createElement('style');
+            ctrlSelectionStyle.id = 'vrl-ctrl-sel';
+            // `text !important` beats any specificity already in the document and
+            // overrides the browser's own cell-selection UA stylesheet rule.
+            // -webkit- covers Chrome/Safari; -moz- is required for Firefox because
+            // Firefox's UA table stylesheet uses -moz-user-select internally and
+            // the unprefixed property alone does not override it in all versions.
+            // The td:focus / th:focus rule suppresses the dotted cell outline that
+            // Firefox draws when a cell receives focus during Ctrl+drag.
+            ctrlSelectionStyle.textContent = `
+              td, th, tr, table {
+                user-select: text !important;
+                -webkit-user-select: text !important;
+                -moz-user-select: text !important;
+              }
+              td:focus, th:focus { outline: none !important; }
+            `;
+            document.head.appendChild(ctrlSelectionStyle);
+          }
         }
         else if (event.altKey && !event.shiftKey) {
           document.body.style.cursor = 'text';
@@ -183,8 +293,25 @@
         }
       });
 
+        /**
+         * keyup — restore cursor and remove the cell-selection override.
+         *
+         * Fires on ANY key release (not just Ctrl) which is intentional: if the
+         * user releases a modifier key while another is still held the cursor
+         * returns to default, preventing a stale zoom-in/text/crosshair cursor.
+         *
+         * The style tag is removed here rather than in the mouseup handler because
+         * the user may press Ctrl without ever clicking, and we must guarantee the
+         * override is always cleaned up regardless of whether a selection was made.
+         * Leaving `user-select: text !important` on table elements permanently
+         * would break the browser's normal table interaction (e.g. copy-cell).
+         */
         document.addEventListener('keyup', function () {
           document.body.style.cursor = 'default';
+          if (ctrlSelectionStyle) {
+            ctrlSelectionStyle.remove();
+            ctrlSelectionStyle = null;  // allow re-injection on next keydown
+          }
       });
 
         console.log("🚀 Custom Selection Engine Active. [Default: Highlight] [Alt+Click: In-Caret + Red Spot] [Shift+Click: Out-Block + Red Spot]");
