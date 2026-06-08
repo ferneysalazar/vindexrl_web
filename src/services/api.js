@@ -92,6 +92,13 @@ export const documentSubthemes = {
 };
 
 export const htmlFiles = {
-  save: (name, content) => request(`/html-files/${name}`, { method: 'PUT', body: JSON.stringify({ content }) }),
+  save: (name, content) => fetch(`${BASE}/html-files/${name}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'text/html; charset=utf-8' },
+    body: content,
+  }).then(res => {
+    if (!res.ok) return res.text().then(msg => { throw new Error(`${res.status}: ${msg}`); });
+    return res.status === 204 ? null : res.json();
+  }),
 };
 
