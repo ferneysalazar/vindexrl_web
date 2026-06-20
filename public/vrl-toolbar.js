@@ -1,9 +1,47 @@
+/**
+ * vrl-toolbar.js
+ *
+ * Floating annotation toolbar injected into HTML documents opened by the VRL viewer.
+ * The toolbar is a fixed-position panel that the user can drag anywhere on screen.
+ *
+ * Toolbar buttons (left → right):
+ *  ⠿  Drag handle        — reposition the toolbar by mouse drag.
+ *  ✏  Delete spots       — removes all <note-wrapper> anchors inside the current
+ *                           text selection (mousedown so selection is still live).
+ *  ↩  Undo               — removes the most recently added anchor (LIFO stack).
+ *                           Disabled until the first anchor is placed.
+ *  ↓• Spots navigation   — toggle: opens the navigator and optionally scopes it to
+ *                           a text selection that was active at toggle time.
+ *  ▥  Link panel         — toggle: shows/hides the Document Search panel.
+ *  💾 Save               — serialises the document and sends it to the opener window
+ *                           via postMessage after a confirmation dialog.
+ *
+ * Cross-script communication:
+ *  - vrl-annotation.js dispatches 'vrl-anchor-added' CustomEvents on document
+ *    after every successful placement. This toolbar listens for those events to
+ *    maintain its undo stack and re-render the spots navigator — no shared globals.
+ *  - The save payload is posted to window.opener so the parent DocumentForm can
+ *    persist the HTML without this window needing server credentials.
+ *  - Document search results arrive via a 'vrl-search-results' message from the
+ *    opener in response to 'vrl-search-documents' requests.
+ */
 (function () {
+  /**
+   * Builds the entire toolbar DOM, wires all event listeners, and appends the
+   * toolbar to document.body. Called once after DOMContentLoaded (or immediately
+   * if the document is already interactive).
+   */
   function initVrlToolbar() {
     console.log('📦 Initializing Floating Annotation Toolbar...');
 
+    // -------------------------------------------------------------------------
+    // Stylesheet
+    // -------------------------------------------------------------------------
+    // All toolbar styles are injected programmatically so this file ships as a
+    // single self-contained script with no external CSS dependency.
     const style = document.createElement('style');
     style.textContent = `
+    /* --- Toolbar shell --- */
     .vrl-floating-toolbar {
       position: fixed;
       top: 20px;
@@ -33,6 +71,8 @@
       background: rgba(255, 255, 255, 0.85);
       box-shadow: 0 12px 38px rgba(0, 0, 0, 0.1);
     }
+
+    /* --- Drag handle --- */
     .vrl-toolbar-drag-handle {
       cursor: grab;
       display: flex;
@@ -43,6 +83,8 @@
       color: rgba(0, 0, 0, 0.3);
     }
     .vrl-toolbar-drag-handle:active { cursor: grabbing; }
+
+    /* --- Icon buttons --- */
     .vrl-toolbar-btn {
       background: transparent;
       border: none;
@@ -59,9 +101,14 @@
     }
     .vrl-toolbar-btn:hover { background: rgba(0, 0, 0, 0.05); color: #1a1a1a; }
     .vrl-toolbar-btn:active { background: rgba(0, 0, 0, 0.1); transform: scale(0.96); }
+    /* Disabled state: pointer-events:none prevents tooltip from showing on hover. */
     .vrl-toolbar-btn:disabled { opacity: 0.35; cursor: not-allowed; pointer-events: none; }
+    /* Active/toggled-on state (used by spots nav and link panel buttons). */
     .vrl-toolbar-btn.vrl-active { background: rgba(0, 100, 255, 0.1); color: #1a56cc; }
     .vrl-toolbar-btn.vrl-active:hover { background: rgba(0, 100, 255, 0.16); }
+
+    /* --- Spots navigator --- */
+    /* Hidden by default; .vrl-nav-visible switches it to flex when the toggle is on. */
     #vrlSpotsNav {
       display: none;
       align-items: center;
@@ -97,6 +144,7 @@
       gap: 1px;
       flex: 1;
     }
+    /* Individual spot number pill. */
     .vrl-spots-nav-item {
       min-width: 20px;
       height: 20px;
@@ -115,11 +163,13 @@
       flex-shrink: 0;
     }
     .vrl-spots-nav-item:hover { background: rgba(0, 0, 0, 0.06); }
+    /* Highlighted pill for the currently active spot. */
     .vrl-spots-nav-item.vrl-nav-current {
       background: rgba(0, 100, 255, 0.12);
       color: #1a56cc;
       font-weight: 600;
     }
+    /* Ellipsis separator shown when the spot count exceeds 7. */
     .vrl-spots-nav-ellipsis {
       font-size: 11px;
       color: #bbb;
@@ -127,6 +177,9 @@
       line-height: 20px;
       flex-shrink: 0;
     }
+
+    /* --- Tooltip (CSS-only, no JS) --- */
+    /* data-tooltip value is rendered via ::after pseudo-element. */
     .vrl-toolbar-btn::after {
       content: attr(data-tooltip);
       position: absolute;
@@ -146,6 +199,8 @@
       z-index: 1000001;
     }
     .vrl-toolbar-btn:hover::after { opacity: 1; transform: translateX(-50%) scale(1); }
+
+    /* --- Visual separator between button groups --- */
     .vrl-toolbar-sep {
       width: 1px;
       height: 20px;
@@ -153,6 +208,8 @@
       margin: 0 2px;
       flex-shrink: 0;
     }
+
+    /* --- Link panel (document search + spots navigator container) --- */
     #vrlLinkPanel {
       display: none;
       background: rgba(255, 255, 255, 0.6);
@@ -164,7 +221,7 @@
       margin-top: 6px;
       padding: 10px;
       box-sizing: border-box;
-      position: relative;
+      position: relative;   /* allows left offset for boundary correction */
       color: #333;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       font-size: 13px;
@@ -277,10 +334,12 @@
       color: #999;
       text-align: center;
     }
+
+    /* --- Save confirmation modal --- */
     .vrl-confirm-overlay {
       position: fixed;
       inset: 0;
-      z-index: 1000002;
+      z-index: 1000002;   /* above the toolbar's z-index 999999 */
       background: rgba(0, 0, 0, 0.25);
       display: flex;
       align-items: center;
@@ -340,6 +399,10 @@
     `;
     document.head.appendChild(style);
 
+    // -------------------------------------------------------------------------
+    // Toolbar DOM construction
+    // -------------------------------------------------------------------------
+
     const toolbar = document.createElement('div');
     toolbar.className = 'vrl-floating-toolbar';
 
@@ -347,6 +410,8 @@
     mainRow.className = 'vrl-toolbar-main-row';
     toolbar.appendChild(mainRow);
 
+    // Six-dot grid icon — purely decorative; the mousedown listener below makes
+    // this div the drag initiator.
     const dragHandle = document.createElement('div');
     dragHandle.className = 'vrl-toolbar-drag-handle';
     dragHandle.innerHTML = `
@@ -361,6 +426,7 @@
     `;
     mainRow.appendChild(dragHandle);
 
+    // Delete button — sweeps all <note-wrapper> anchors inside the live text selection.
     const deleteButton = document.createElement('button');
     deleteButton.className = 'vrl-toolbar-btn';
     deleteButton.setAttribute('data-tooltip', 'Delete spots in selection');
@@ -372,6 +438,8 @@
     `;
     mainRow.appendChild(deleteButton);
 
+    // Undo button — removes the last anchor from the UUID stack (LIFO).
+    // Starts disabled; enabled by the 'vrl-anchor-added' listener below.
     const undoButton = document.createElement('button');
     undoButton.className = 'vrl-toolbar-btn';
     undoButton.setAttribute('data-tooltip', 'Undo last anchor');
@@ -383,6 +451,9 @@
     `;
     mainRow.appendChild(undoButton);
 
+    // Spots navigation toggle — shows/hides the navigator strip inside #vrlLinkPanel.
+    // If a text selection is active at click time, the navigator is scoped to spots
+    // inside that selection only; otherwise it covers all spots in the document.
     const spotsNavButton = document.createElement('button');
     spotsNavButton.className = 'vrl-toolbar-btn';
     spotsNavButton.setAttribute('data-tooltip', 'Spots navigation');
@@ -393,6 +464,20 @@
     `;
     mainRow.appendChild(spotsNavButton);
 
+    /**
+     * Spots nav toggle handler.
+     *
+     * On activation:
+     *  1. Reads window.getSelection() immediately (before the panel opens and the
+     *     user's selection is cleared by the click). A non-collapsed range is cloned
+     *     into spotsNavRange so getAllSpots() can filter by it. cloneRange() is
+     *     necessary because the live Range object mutates as the selection changes.
+     *  2. Forces #vrlLinkPanel open so the navigator strip is visible.
+     *  3. Resets currentSpotIndex to -1 (nothing selected in this new scope).
+     *
+     * On deactivation:
+     *  spotsNavRange is cleared so subsequent getAllSpots() calls return all spots.
+     */
     spotsNavButton.addEventListener('click', function () {
       const isActive = spotsNavButton.classList.toggle('vrl-active');
       const spotsNav = document.getElementById('vrlSpotsNav');
@@ -413,7 +498,9 @@
       }
     });
 
-    // Replaced SVG markup with absolute path coordinates using direct currentColor fill
+    // Link panel toggle — shows/hides the document search panel independently of
+    // the spots navigator. Uses absolute path coordinates (fill) to avoid SVG
+    // stroke-width scaling issues at small sizes.
     const panelButton = document.createElement('button');
     panelButton.className = 'vrl-toolbar-btn';
     panelButton.setAttribute('data-tooltip', 'Toggle link panel');
@@ -424,10 +511,12 @@
     `;
     mainRow.appendChild(panelButton);
 
+    // Visual separator between the editing buttons and the save button.
     const sep = document.createElement('div');
     sep.className = 'vrl-toolbar-sep';
     mainRow.appendChild(sep);
 
+    // Save button — triggers a confirmation dialog then serialises and posts the HTML.
     const saveButton = document.createElement('button');
     saveButton.className = 'vrl-toolbar-btn';
     saveButton.setAttribute('data-tooltip', 'Save HTML');
@@ -440,6 +529,12 @@
     `;
     mainRow.appendChild(saveButton);
 
+    // -------------------------------------------------------------------------
+    // Link panel HTML
+    // -------------------------------------------------------------------------
+    // The panel is a child of the toolbar <div> (not document.body) so it moves
+    // with the toolbar during drag. #vrlSpotsNav sits above the search form and
+    // is only shown when the spots nav toggle is active.
     const linkPanel = document.createElement('div');
     linkPanel.id = 'vrlLinkPanel';
     linkPanel.innerHTML = `
@@ -462,14 +557,39 @@
 
     document.body.appendChild(toolbar);
 
+    // -------------------------------------------------------------------------
+    // Undo stack
+    // -------------------------------------------------------------------------
+    // Each entry is the data-vrl-id UUID of a placed <note-wrapper>. LIFO: the
+    // most recently added UUID is at the end of the array and popped first.
+    //
+    // The stack is fed by 'vrl-anchor-added' events dispatched by vrl-annotation.js
+    // after every successful Mode 2 or Mode 3 insertion. Using a custom event rather
+    // than a direct function reference keeps the two scripts fully decoupled —
+    // either can be reloaded independently without breaking the other.
     const undoStack = [];
 
     document.addEventListener('vrl-anchor-added', function (e) {
       undoStack.push(e.detail.id);
       undoButton.disabled = false;
+      // Re-render the navigator so the newly added spot appears in the list.
       renderSpotsNav();
     });
 
+    /**
+     * Undo click handler.
+     *
+     * Pops UUIDs from the stack until it finds one whose element is still in the
+     * DOM (isConnected). Stale IDs can accumulate when the delete-sweep button
+     * removes spots that were also in the undo stack — skipping them silently
+     * avoids a no-op that would consume the user's undo action without visible
+     * effect.
+     *
+     * After removal, parent.normalize() merges any text nodes that were split when
+     * the <note-wrapper> was inserted (inline Mode 2 anchors split their surrounding
+     * text node into two). Leaving split text nodes causes subtle issues with Range
+     * offsets and copy-paste in some browsers.
+     */
     undoButton.addEventListener('click', function () {
       while (undoStack.length > 0) {
         const id = undoStack.pop();
@@ -485,15 +605,46 @@
       renderSpotsNav();
     });
 
+    // -------------------------------------------------------------------------
+    // Spots navigator state
+    // -------------------------------------------------------------------------
+    // currentSpotIndex: 0-based index into the array returned by getAllSpots().
+    //   -1 means no spot is currently highlighted by the navigator.
+    //
+    // spotsNavRange: a cloned Range capturing the text selection at the moment the
+    //   navigator was toggled on. getAllSpots() uses it to filter anchors via
+    //   Range.intersectsNode(). null means "show all spots in the document".
     let currentSpotIndex = -1;
     let spotsNavRange = null;
 
+    /**
+     * Returns the set of <note-wrapper> elements to navigate.
+     *
+     * When spotsNavRange is set, filters the full document-order list to only
+     * those elements that intersect the captured range. Range.intersectsNode()
+     * returns true for elements fully inside, partially inside, or spanning the
+     * range boundary — the right semantics for "spots within this selection".
+     */
     function getAllSpots() {
       const all = Array.from(document.querySelectorAll('note-wrapper'));
       if (!spotsNavRange) return all;
       return all.filter(nw => spotsNavRange.intersectsNode(nw));
     }
 
+    /**
+     * Re-renders the #vrlSpotsNavList contents and updates the prev/next button
+     * disabled states. No-ops if the navigator is not currently visible.
+     *
+     * Ellipsis strategy (keeps the list compact for large documents):
+     *  ≤ 7 spots: show every number.
+     *  > 7 spots: show first 3 numbers, then '…', then last 3 numbers.
+     *  The currently active index is always highlighted regardless of whether its
+     *  number appears in the truncated view (the arrows still work).
+     *
+     * Prev is disabled at the first spot (index 0) or when nothing is selected.
+     * Next is disabled at the last spot. If nothing is selected (index -1) the
+     * next button is still enabled so the first click starts navigation from spot 1.
+     */
     function renderSpotsNav() {
       const spotsNav = document.getElementById('vrlSpotsNav');
       if (!spotsNav || !spotsNav.classList.contains('vrl-nav-visible')) return;
@@ -516,7 +667,7 @@
         return;
       }
 
-      // ≤7: show all; >7: first 3 + ellipsis + last 3
+      // Build the item list: array of 0-based indices interspersed with '…'.
       const items = n <= 7
         ? Array.from({ length: n }, (_, i) => i)
         : [0, 1, 2, '…', n - 3, n - 2, n - 1];
@@ -530,20 +681,41 @@
         } else {
           const btn = document.createElement('button');
           btn.className = 'vrl-spots-nav-item' + (item === currentSpotIndex ? ' vrl-nav-current' : '');
-          btn.textContent = item + 1;
+          btn.textContent = item + 1;  // display as 1-based
           btn.addEventListener('click', function () { navigateToSpot(item); });
           navList.appendChild(btn);
         }
       });
 
+      // currentSpotIndex <= 0 covers both "at first spot" and "nothing selected" (-1).
       prevBtn.disabled = currentSpotIndex <= 0;
       nextBtn.disabled = currentSpotIndex >= n - 1;
     }
 
+    /**
+     * Navigates to the spot at the given 0-based index within getAllSpots().
+     *
+     * Selection handoff to vrl-annotation.js:
+     *  vrl-annotation.js manages selectedSpotEl internally. Rather than sharing
+     *  that variable, we directly manipulate .vrl-spot-selected on the span via
+     *  querySelector. The annotation script's next click will find the class
+     *  already removed and behave correctly (removing a missing class is a no-op).
+     *
+     * Scroll strategy:
+     *  We scroll the inner <span> (the visible red dot) rather than the
+     *  <note-wrapper> itself, because <note-wrapper> has display:contents and
+     *  therefore has no layout box — scrollIntoView on it is a no-op in most
+     *  browsers. The viewport check ensures we only scroll when the dot is
+     *  actually off-screen; if it is already visible we leave the page position
+     *  untouched.
+     *
+     * @param {number} index - 0-based position in the getAllSpots() array.
+     */
     function navigateToSpot(index) {
       const spots = getAllSpots();
       if (index < 0 || index >= spots.length) return;
 
+      // Deselect the previously highlighted spot indicator.
       const prevSelected = document.querySelector('.vrl-spot > span.vrl-spot-selected');
       if (prevSelected) prevSelected.classList.remove('vrl-spot-selected');
 
@@ -552,6 +724,7 @@
       const span = target.querySelector('span');
       if (span) {
         span.classList.add('vrl-spot-selected');
+        // Only scroll if the red dot is outside the current viewport.
         const rect = span.getBoundingClientRect();
         const inViewport = rect.top >= 0 && rect.bottom <= window.innerHeight
                         && rect.left >= 0 && rect.right <= window.innerWidth;
@@ -560,14 +733,27 @@
       renderSpotsNav();
     }
 
+    // Prev arrow: step back one spot. Disabled at index 0 so this will not fire
+    // when index is already 0 (pointer-events:none), but guard anyway.
     document.getElementById('vrlSpotsPrev').addEventListener('click', function () {
       navigateToSpot(currentSpotIndex - 1);
     });
 
+    // Next arrow: if nothing is selected yet (-1), navigate to the first spot (0);
+    // otherwise advance by one.
     document.getElementById('vrlSpotsNext').addEventListener('click', function () {
       navigateToSpot(currentSpotIndex === -1 ? 0 : currentSpotIndex + 1);
     });
 
+    // -------------------------------------------------------------------------
+    // Document search
+    // -------------------------------------------------------------------------
+    /**
+     * Sends a search request to the opener window via postMessage and shows a
+     * loading placeholder. Results arrive asynchronously via the 'message' listener
+     * below. Requires window.opener to exist — the document must be opened from
+     * the DocumentForm editor, not navigated to directly.
+     */
     function searchDocuments(type, number, year, entity) {
       const resultsEl = document.getElementById('vrlDocResults');
       resultsEl.style.display = 'block';
@@ -580,12 +766,20 @@
 
       window.opener.postMessage(
         { type: 'vrl-search-documents', params: { type, number, year, entity } },
-        window.opener.location.origin
+        window.opener.location.origin  // restrict to the same origin for security
       );
 
       adjustPanelBoundary();
     }
 
+    /**
+     * Handles 'vrl-search-results' messages from the opener window.
+     *
+     * The opener's DocumentForm listens for 'vrl-search-documents', queries its
+     * data source, and posts back a 'vrl-search-results' message containing a
+     * documents array. Each entry may have documentName, normTypeName, number,
+     * year, and id fields — we fall back gracefully if any are missing.
+     */
     window.addEventListener('message', function (e) {
       if (e.data?.type !== 'vrl-search-results') return;
       const resultsEl = document.getElementById('vrlDocResults');
@@ -616,14 +810,26 @@
       searchDocuments(type, number, year, entity);
     });
 
+    // -------------------------------------------------------------------------
+    // Toolbar drag
+    // -------------------------------------------------------------------------
     let isDragging = false;
     let startX, startY, initialLeft, initialTop;
 
+    /**
+     * Keeps the link panel within the viewport horizontally after the toolbar
+     * is moved or the panel content changes size.
+     *
+     * The panel is positioned with `left` relative to the toolbar via CSS (it is
+     * a child element). We start at left:0 (aligned with the toolbar's left edge)
+     * then shift left if the panel would overflow the right edge of the viewport,
+     * and clamp so it never goes past the left viewport edge either.
+     */
     function adjustPanelBoundary() {
       if (linkPanel.style.display !== 'block') return;
 
       linkPanel.style.left = '0px';
-      
+
       const toolbarRect = toolbar.getBoundingClientRect();
       const panelWidth = linkPanel.offsetWidth;
       const viewportWidth = window.innerWidth;
@@ -640,6 +846,12 @@
       linkPanel.style.left = `${targetLeft}px`;
     }
 
+    /**
+     * Drag start: capture the toolbar's current pixel position and the pointer's
+     * starting coordinates. We switch from right/bottom CSS positioning to
+     * explicit left/top so we can move the toolbar by setting those values during
+     * mousemove. preventDefault stops text selection during the drag.
+     */
     dragHandle.addEventListener('mousedown', function (e) {
       isDragging = true;
       const rect = toolbar.getBoundingClientRect();
@@ -656,32 +868,61 @@
       e.preventDefault();
     });
 
+    /**
+     * Drag move: compute new position from the delta since drag start,
+     * clamped to keep the toolbar at least 10px inside the viewport on all sides.
+     */
     function dragMove(e) {
       if (!isDragging) return;
       let newLeft = initialLeft + (e.clientX - startX);
       let newTop = initialTop + (e.clientY - startY);
-      
+
       newLeft = Math.max(10, Math.min(newLeft, window.innerWidth - toolbar.offsetWidth - 10));
       newTop = Math.max(10, Math.min(newTop, window.innerHeight - toolbar.offsetHeight - 10));
-      
+
       toolbar.style.left = `${newLeft}px`;
       toolbar.style.top = `${newTop}px`;
-      
+
       adjustPanelBoundary();
     }
 
+    // Drag end: remove the temporary move/up listeners to avoid accumulating them.
     function dragEnd() {
       isDragging = false;
       document.removeEventListener('mousemove', dragMove);
       document.removeEventListener('mouseup', dragEnd);
     }
 
+    // -------------------------------------------------------------------------
+    // Panel button
+    // -------------------------------------------------------------------------
     panelButton.addEventListener('click', function () {
       const isVisible = linkPanel.style.display === 'block';
       linkPanel.style.display = isVisible ? 'none' : 'block';
       adjustPanelBoundary();
     });
 
+    // -------------------------------------------------------------------------
+    // Delete button — sweep spots in selection
+    // -------------------------------------------------------------------------
+    /**
+     * Uses mousedown (not click) so the text selection is still live when the
+     * handler runs. A click event fires after mouseup, at which point most browsers
+     * have already collapsed the selection.
+     *
+     * Strategy:
+     *  1. Clone the selection range contents into a DocumentFragment — this is a
+     *     cheap structural copy that lets us count matching elements without touching
+     *     the live DOM.
+     *  2. If the clone contains any .vrl-spot / note-wrapper elements, query the
+     *     live container for all such elements and remove those that the Selection
+     *     object reports as contained (selection.containsNode with allowPartial:true
+     *     handles anchors that straddle a selection boundary).
+     *  3. normalize() merges any split text nodes left behind by inline anchors.
+     *
+     * preventDefault stops the mousedown from moving the caret, which would
+     * collapse the selection before we can read it.
+     */
     deleteButton.addEventListener('mousedown', function (e) {
       e.preventDefault();
       const selection = window.getSelection();
@@ -713,6 +954,24 @@
       }
     });
 
+    // -------------------------------------------------------------------------
+    // Save
+    // -------------------------------------------------------------------------
+    /**
+     * Serialises the current document and posts it to window.opener.
+     *
+     * The toolbar itself and the two injected scripts (#vindexrlScript1 and
+     * #vindexrl-toolbar) are stripped from the clone before serialisation so the
+     * saved HTML is a clean document without runtime tooling.
+     *
+     * cloneNode(true) is used instead of document.documentElement.outerHTML
+     * because it gives us a live DOM tree we can mutate (strip nodes) before
+     * turning it into a string — outerHTML is a one-shot serialisation with no
+     * opportunity to filter.
+     *
+     * The opener receives a 'vrl-save' postMessage containing the raw HTML string.
+     * A green flash on the save button confirms the message was sent.
+     */
     function doSave() {
       const clone = document.documentElement.cloneNode(true);
 
@@ -734,6 +993,11 @@
       }
     }
 
+    /**
+     * Save button click: show a confirmation modal before overwriting.
+     * The modal is appended to document.body (not inside the toolbar) so it
+     * covers the full viewport via position:fixed + inset:0.
+     */
     saveButton.addEventListener('click', function () {
       const overlay = document.createElement('div');
       overlay.className = 'vrl-confirm-overlay';
@@ -757,9 +1021,16 @@
       document.body.appendChild(overlay);
     });
 
+    // Re-check panel boundary whenever the viewport is resized (e.g. device rotation).
     window.addEventListener('resize', adjustPanelBoundary);
   }
 
+  // ---------------------------------------------------------------------------
+  // Initialisation
+  // ---------------------------------------------------------------------------
+  // If the document is still parsing (readyState === 'loading'), defer until
+  // DOMContentLoaded so document.body exists before we append the toolbar.
+  // Otherwise call immediately — the document is already interactive.
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', initVrlToolbar);
   } else {

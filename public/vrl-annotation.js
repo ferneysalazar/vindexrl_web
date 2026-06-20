@@ -6,21 +6,52 @@
        * Provides three keyboard+mouse placement modes for inserting <note-wrapper> anchors
        * (red dot markers) into the document without disturbing surrounding content:
        *
-       *  Mode 1 — Ctrl+drag:  expand selection to complete structural block(s), then wrap
-       *  Mode 2 — Alt+click:  inline caret placement at exact click position
-       *  Mode 3 — Shift+click: block-density placement before/after the nearest block
+       *  Mode 1 — Ctrl+drag:  expand selection to the common ancestor of the outermost
+       *                        semantic blocks touched, then leave the expanded selection
+       *                        for the user to act on.
+       *  Mode 2 — Alt+click:  insert a <note-wrapper> inline at the exact text caret
+       *                        position under the pointer.
+       *  Mode 3 — Shift+click: insert a <note-wrapper> as a block-level sibling,
+       *                        before or after the nearest semantic block depending on
+       *                        where in the block the click landed (density heuristic).
        *
        * Cursor feedback (zoom-in / text / crosshair) signals which mode is active.
-       * A CSS override fixes Chrome/Firefox table cell-selection that otherwise blocks
-       * text-range creation while Ctrl is held.
+       *
+       * A CSS override injected at Ctrl keydown and removed at keyup fixes a Chrome /
+       * Firefox built-in "table cell selection" behaviour that blocks normal text-range
+       * creation while Ctrl is held, which would prevent Mode 1 from ever firing.
+       *
+       * Each <note-wrapper> carries:
+       *   data-vrl-id        — UUID unique to the anchor (used by the undo stack)
+       *   data-status        — placement mode ('inline-caret' | 'block-density-anchor')
+       *   data-timestamp     — Unix ms at creation time
+       *
+       * After a successful insertion, a 'vrl-anchor-added' CustomEvent is dispatched on
+       * document so vrl-toolbar.js can maintain its undo stack without needing shared
+       * state or a direct reference to this IIFE.
        */
       (function () {
+      // Guard against environments where the DOM is unavailable (e.g. SSR / Node).
       if (typeof window === 'undefined' || !document) return;
 
-      // Semantic block elements used as expansion targets and density anchors.
+      // Semantic block elements used as expansion targets (Mode 1) and density anchors
+      // (Mode 3). Table elements are intentionally excluded: a selection inside a single
+      // <td> would otherwise expand to the whole table, which is almost never desired.
       const BLOCK_SELECTOR = 'p, div, h1, h2, h3, section, article, li';
 
-      // Default 70% opacity for all spot indicators; selected state is full opacity + double size.
+      // ---------------------------------------------------------------------------
+      // Spot indicator styles
+      // ---------------------------------------------------------------------------
+      // Injected as a <style> tag rather than inline so it applies to spots that
+      // already exist in the document (e.g. loaded from a previously saved HTML),
+      // not only to spots created in this session.
+      //
+      // Default: 70% opacity so indicators are present but unobtrusive.
+      // Selected: 100% opacity + double font-size (40px vs the 20px inline style set
+      //   in createNoteWrapper). The !important is necessary because the inline style
+      //   on the span would otherwise win the cascade — author !important declarations
+      //   beat non-!important inline styles.
+      // Transition: animates both changes smoothly (0.2s ease).
       const spotStyle = document.createElement('style');
       spotStyle.textContent = `
         .vrl-spot > span {
@@ -34,18 +65,39 @@
       `;
       document.head.appendChild(spotStyle);
 
+      // ---------------------------------------------------------------------------
+      // Spot single-selection
+      // ---------------------------------------------------------------------------
+      // Tracks the currently selected span so we can deselect it when another spot
+      // is clicked. Null means nothing is currently selected.
       let selectedSpotEl = null;
 
-      // Single-selection: plain click on a spot indicator selects it and deselects any previous one.
+      /**
+       * Plain-click handler for spot selection.
+       *
+       * Only fires for unmodified clicks (no Alt / Shift / Ctrl / Meta) so it does
+       * not interfere with the annotation placement modes that use those modifiers.
+       *
+       * Targets the direct child <span> of a .vrl-spot element (the red dot).
+       * stopPropagation prevents the click from bubbling to the document's other
+       * click listeners (the Mode 2 / Mode 3 handler below), which would otherwise
+       * try to insert a new anchor at the clicked position.
+       *
+       * Toggle behaviour:
+       *  - Clicking a different spot: deselects previous, selects new.
+       *  - Clicking the same spot again: deselects it (selectedSpotEl → null).
+       */
       document.addEventListener('click', function (event) {
         if (event.altKey || event.shiftKey || event.ctrlKey || event.metaKey) return;
         const target = event.target;
+        // Check direct parent so we don't accidentally select spans nested deeper.
         if (!target.parentElement || !target.parentElement.classList.contains('vrl-spot')) return;
         event.stopPropagation();
         if (selectedSpotEl && selectedSpotEl !== target) {
           selectedSpotEl.classList.remove('vrl-spot-selected');
         }
         if (selectedSpotEl === target) {
+          // Second click on the same spot → toggle off.
           target.classList.remove('vrl-spot-selected');
           selectedSpotEl = null;
         } else {
@@ -54,7 +106,22 @@
         }
       });
 
-      // Creates a <note-wrapper> element containing a red dot (•) anchor indicator.
+      // ---------------------------------------------------------------------------
+      // <note-wrapper> factory
+      // ---------------------------------------------------------------------------
+      /**
+       * Creates a <note-wrapper> custom element containing a styled red dot (•).
+       *
+       * display:contents makes the wrapper invisible to layout — it acts as a
+       * transparent container so the inline red dot flows with surrounding text
+       * without introducing an extra box.
+       *
+       * data-vrl-id holds a UUID generated with crypto.randomUUID() (available in
+       * all modern browsers). The toolbar's undo stack stores this UUID so it can
+       * locate and remove the exact element without iterating the whole DOM.
+       *
+       * @param {string} status - Placement mode label stored in data-status.
+       */
       function createNoteWrapper(status = 'empty-anchor') {
         const wrapper = document.createElement('note-wrapper');
       wrapper.style.display = 'contents';
@@ -67,8 +134,8 @@
       redSpot.textContent = '•';
       redSpot.style.color = '#dc3545';
       redSpot.style.fontWeight = 'bold';
-      redSpot.style.fontSize = '20px';
-      redSpot.style.lineHeight = '0';
+      redSpot.style.fontSize = '20px';   // overridden to 40px by .vrl-spot-selected
+      redSpot.style.lineHeight = '0';    // prevents the bullet from expanding line-height
       redSpot.style.display = 'inline-block';
       redSpot.style.position = 'relative';
       redSpot.style.verticalAlign = 'middle';
@@ -80,8 +147,26 @@
       return wrapper;
       }
 
-      // Mode 1: Expands the current selection to the common ancestor of the
-      // outermost semantic blocks it touches. No-ops when within a single block.
+      // ---------------------------------------------------------------------------
+      // Mode 1 — Expand selection to complete structural tags
+      // ---------------------------------------------------------------------------
+      /**
+       * Expands the current selection to the common ancestor of the outermost
+       * semantic blocks at each boundary.
+       *
+       * Two cases:
+       *  a) Both boundaries resolve to the same block (or no block ancestor exists):
+       *     the selection is already within a single structural unit — leave it as-is
+       *     so the user's exact character-level selection is preserved.
+       *  b) Boundaries are in different blocks: the selection spans a structural
+       *     boundary. Expand to the common ancestor so the resulting selection covers
+       *     complete tags rather than a partial slice.
+       *
+       * BLOCK_SELECTOR intentionally excludes TD / TR / TABLE, which means a
+       * selection confined within a single table cell returns null from .closest()
+       * and falls into case (a), preventing the <table> from being used as the
+       * expansion target.
+       */
       function expandSelectionToCompleteTags() {
         const selection = window.getSelection();
         if (!selection || selection.rangeCount === 0) return;
@@ -89,7 +174,7 @@
         const range = selection.getRangeAt(0);
         if (range.collapsed) return;
 
-        // Resolve element nodes from the raw start/end containers (which may be text nodes).
+        // startContainer / endContainer may be text nodes; walk up to the element.
         const startEl = range.startContainer.nodeType === Node.TEXT_NODE
           ? range.startContainer.parentElement
           : range.startContainer;
@@ -125,8 +210,24 @@
         console.log("⚡ Mode 1: Range expanded to complete structural tags:", commonAncestor.tagName);
       }
 
-        // Mode 2: Inserts a <note-wrapper> inline at the exact text caret position
-        // under (x, y), using caretPositionFromPoint with caretRangeFromPoint fallback.
+      // ---------------------------------------------------------------------------
+      // Mode 2 — Inline caret placement
+      // ---------------------------------------------------------------------------
+      /**
+       * Inserts a <note-wrapper> inline at the exact text caret position under (x, y).
+       *
+       * Browser API differences:
+       *  - caretPositionFromPoint  (Firefox, Chrome 128+): returns a CaretPosition
+       *    with offsetNode + offset; we build a collapsed Range from it.
+       *  - caretRangeFromPoint (Chrome < 128, Safari): returns a Range directly.
+       *
+       * The insertion is wrapped in try/catch because some browsers lock native
+       * text nodes in certain contexts (e.g. inside <input> shadow DOM) and throw
+       * a HierarchyRequestError when insertNode is called.
+       *
+       * After a successful insertion the 'vrl-anchor-added' CustomEvent carries the
+       * UUID so the toolbar's undo stack can track this element by ID.
+       */
         function executeMode2CaretPlacement(x, y) {
           let range = null;
 
@@ -139,6 +240,7 @@
           }
         }
         else if (document.caretRangeFromPoint) {
+          // Safari / older Chrome fallback.
           range = document.caretRangeFromPoint(x, y);
         }
 
@@ -151,6 +253,8 @@
 
         try {
           range.insertNode(noteWrapper);
+          // Notify the toolbar's undo stack via a custom event rather than a direct
+          // function call to keep the two scripts fully decoupled.
           document.dispatchEvent(new CustomEvent('vrl-anchor-added', { detail: { id: noteWrapper.dataset.vrlId } }));
         console.log("⚡ Mode 2: Inserted inline note-wrapper with red spot at precision caret.");
           } catch (error) {
@@ -159,9 +263,29 @@
         }
       }
 
-        // Mode 3: Places a block-level <note-wrapper> before or after the nearest
-        // semantic block based on where within the block the click landed (<50% → before,
-        // ≥50% → after), measured by character count relative to total block length.
+      // ---------------------------------------------------------------------------
+      // Mode 3 — Block-density placement
+      // ---------------------------------------------------------------------------
+      /**
+       * Places a block-level <note-wrapper> before or after the nearest semantic
+       * block, using a character-density heuristic to decide which side.
+       *
+       * Algorithm:
+       *  1. Resolve the text node and offset under (x, y) using the same
+       *     caretPositionFromPoint / caretRangeFromPoint APIs as Mode 2.
+       *  2. Walk up to the nearest BLOCK_SELECTOR ancestor.
+       *  3. Count the characters between the block's start and the caret offset.
+       *  4. Express that count as a percentage of the block's total character count.
+       *  5. < 50% → the click was in the first half → place the anchor BEFORE.
+       *     ≥ 50% → the click was in the second half → place the anchor AFTER.
+       *
+       * The indicator dot for Mode 3 is styled as a centred block element (display:block,
+       * text-align:center) so it visually sits between paragraphs rather than
+       * appearing inline like a Mode 2 anchor.
+       *
+       * After insertion, 'vrl-anchor-added' is dispatched on document (same pattern
+       * as Mode 2) so the toolbar undo stack captures the new UUID.
+       */
         function executeMode3DensityPlacement(x, y) {
           let offsetNode = null;
         let offset = 0;
@@ -174,11 +298,13 @@
         if (range) {offsetNode = range.startContainer; offset = range.startOffset; }
         }
 
+        // Only text nodes carry meaningful character offsets; bail on element nodes.
         if (!offsetNode || offsetNode.nodeType !== Node.TEXT_NODE) return;
 
         const closestBlock = offsetNode.parentElement.closest(BLOCK_SELECTOR);
         if (!closestBlock) return;
 
+        // Build a range from the block's start to the caret to count characters before it.
         const textBeforeRange = document.createRange();
         textBeforeRange.setStart(closestBlock, 0);
         textBeforeRange.setEnd(offsetNode, offset);
@@ -186,12 +312,14 @@
         const characterCountBefore = textBeforeRange.toString().length;
         const totalBlockCharacters = closestBlock.textContent.length;
 
+        // Guard against empty blocks (division by zero → 0% → always placed before).
         const textPercentage = totalBlockCharacters > 0
         ? (characterCountBefore / totalBlockCharacters) * 100
         : 0;
 
         const noteWrapper = createNoteWrapper('block-density-anchor');
 
+        // Override the inline display to centre the dot between block elements.
         const indicatorDot = noteWrapper.querySelector('span');
         if (indicatorDot) {
           indicatorDot.style.display = 'block';
@@ -203,13 +331,25 @@
           closestBlock.parentNode.insertBefore(noteWrapper, closestBlock);
         console.log(`⚡ Mode 3: Placed BEFORE block (${textPercentage.toFixed(1)}% density detected)`);
         } else {
+          // insertBefore with nextSibling is equivalent to insertAfter.
           closestBlock.parentNode.insertBefore(noteWrapper, closestBlock.nextSibling);
         console.log(`⚡ Mode 3: Placed AFTER block (${textPercentage.toFixed(1)}% density detected)`);
         }
         document.dispatchEvent(new CustomEvent('vrl-anchor-added', { detail: { id: noteWrapper.dataset.vrlId } }));
       }
 
-        // Mode 1 trigger: on Ctrl+mouseup, expand the selection if text was selected.
+      // ---------------------------------------------------------------------------
+      // Mode 1 trigger — mouseup
+      // ---------------------------------------------------------------------------
+      /**
+       * On Ctrl / Meta + mouseup, attempt to expand the selection if the user dragged
+       * out a non-empty range.
+       *
+       * The 15 ms setTimeout is intentional: the browser finalises the selection
+       * object slightly after the mouseup event fires. Calling getSelection()
+       * synchronously inside mouseup can return an empty or partial range on some
+       * browsers. The delay lets the selection settle before we inspect it.
+       */
         document.addEventListener('mouseup', function (event) {
         const isModifierPressed = event.ctrlKey || event.metaKey;
 
@@ -226,7 +366,20 @@
         }, 15);
       });
 
-        // Mode 2/3 trigger: Alt+click → inline caret; Shift+click → block density.
+      // ---------------------------------------------------------------------------
+      // Mode 2 / 3 trigger — click
+      // ---------------------------------------------------------------------------
+      /**
+       * Dispatches Alt+click to Mode 2 and Shift+click to Mode 3.
+       *
+       * preventDefault stops the browser from following links or activating form
+       * elements at the clicked position. stopPropagation prevents the spot-selection
+       * click listener (registered above) from also firing and trying to select a spot.
+       *
+       * After a Shift+click the native selection is cleared because the Shift key
+       * causes the browser to extend any existing text selection to the click point,
+       * producing an unwanted highlight that has no semantic value here.
+       */
         document.addEventListener('click', function (event) {
         const x = event.clientX;
         const y = event.clientY;
@@ -243,6 +396,8 @@
 
         executeMode3DensityPlacement(x, y);
 
+        // Shift+click extends the browser's text selection to the clicked point.
+        // Clear it so no visual highlight is left behind after placing the anchor.
         const nativeSelection = window.getSelection();
         if (nativeSelection) {
           nativeSelection.removeAllRanges();
