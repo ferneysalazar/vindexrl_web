@@ -59,6 +59,74 @@
     }
     .vrl-toolbar-btn:hover { background: rgba(0, 0, 0, 0.05); color: #1a1a1a; }
     .vrl-toolbar-btn:active { background: rgba(0, 0, 0, 0.1); transform: scale(0.96); }
+    .vrl-toolbar-btn:disabled { opacity: 0.35; cursor: not-allowed; pointer-events: none; }
+    .vrl-toolbar-btn.vrl-active { background: rgba(0, 100, 255, 0.1); color: #1a56cc; }
+    .vrl-toolbar-btn.vrl-active:hover { background: rgba(0, 100, 255, 0.16); }
+    #vrlSpotsNav {
+      display: none;
+      align-items: center;
+      gap: 3px;
+      padding-bottom: 8px;
+      margin-bottom: 8px;
+      border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+    }
+    #vrlSpotsNav.vrl-nav-visible { display: flex; }
+    .vrl-spots-nav-arrow {
+      background: transparent;
+      border: 1px solid rgba(0, 0, 0, 0.15);
+      border-radius: 4px;
+      width: 20px;
+      height: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      color: #555;
+      font-size: 13px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      line-height: 1;
+      padding: 0;
+      flex-shrink: 0;
+      transition: background 0.12s;
+    }
+    .vrl-spots-nav-arrow:hover { background: rgba(0, 0, 0, 0.06); }
+    .vrl-spots-nav-arrow:disabled { opacity: 0.3; cursor: not-allowed; pointer-events: none; }
+    .vrl-spots-nav-list {
+      display: flex;
+      align-items: center;
+      gap: 1px;
+      flex: 1;
+    }
+    .vrl-spots-nav-item {
+      min-width: 20px;
+      height: 20px;
+      border-radius: 4px;
+      border: none;
+      background: transparent;
+      font-size: 11px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      color: #555;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 3px;
+      transition: background 0.12s;
+      flex-shrink: 0;
+    }
+    .vrl-spots-nav-item:hover { background: rgba(0, 0, 0, 0.06); }
+    .vrl-spots-nav-item.vrl-nav-current {
+      background: rgba(0, 100, 255, 0.12);
+      color: #1a56cc;
+      font-weight: 600;
+    }
+    .vrl-spots-nav-ellipsis {
+      font-size: 11px;
+      color: #bbb;
+      padding: 0 1px;
+      line-height: 20px;
+      flex-shrink: 0;
+    }
     .vrl-toolbar-btn::after {
       content: attr(data-tooltip);
       position: absolute;
@@ -209,6 +277,66 @@
       color: #999;
       text-align: center;
     }
+    .vrl-confirm-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 1000002;
+      background: rgba(0, 0, 0, 0.25);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .vrl-confirm-box {
+      background: rgba(255, 255, 255, 0.92);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(0, 0, 0, 0.08);
+      border-radius: 12px;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.15);
+      padding: 20px 22px 16px;
+      min-width: 240px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    .vrl-confirm-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: #1a1a1a;
+      margin-bottom: 4px;
+    }
+    .vrl-confirm-msg {
+      font-size: 12px;
+      color: #666;
+      margin-bottom: 16px;
+    }
+    .vrl-confirm-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+    .vrl-confirm-cancel {
+      background: transparent;
+      border: 1px solid rgba(0, 0, 0, 0.15);
+      border-radius: 6px;
+      padding: 5px 12px;
+      font-size: 12px;
+      font-family: inherit;
+      color: #555;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .vrl-confirm-cancel:hover { background: rgba(0, 0, 0, 0.05); }
+    .vrl-confirm-save {
+      background: #28a745;
+      border: none;
+      border-radius: 6px;
+      padding: 5px 14px;
+      font-size: 12px;
+      font-family: inherit;
+      color: #fff;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+    .vrl-confirm-save:hover { opacity: 0.88; }
     `;
     document.head.appendChild(style);
 
@@ -244,6 +372,47 @@
     `;
     mainRow.appendChild(deleteButton);
 
+    const undoButton = document.createElement('button');
+    undoButton.className = 'vrl-toolbar-btn';
+    undoButton.setAttribute('data-tooltip', 'Undo last anchor');
+    undoButton.disabled = true;
+    undoButton.innerHTML = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/>
+    </svg>
+    `;
+    mainRow.appendChild(undoButton);
+
+    const spotsNavButton = document.createElement('button');
+    spotsNavButton.className = 'vrl-toolbar-btn';
+    spotsNavButton.setAttribute('data-tooltip', 'Spots navigation');
+    spotsNavButton.innerHTML = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 2v14"/><path d="m19 9-7 7-7-7"/><circle cx="12" cy="21" r="1"/>
+    </svg>
+    `;
+    mainRow.appendChild(spotsNavButton);
+
+    spotsNavButton.addEventListener('click', function () {
+      const isActive = spotsNavButton.classList.toggle('vrl-active');
+      const spotsNav = document.getElementById('vrlSpotsNav');
+      if (isActive) {
+        const sel = window.getSelection();
+        spotsNavRange = (sel && sel.rangeCount > 0 && !sel.getRangeAt(0).collapsed)
+          ? sel.getRangeAt(0).cloneRange()
+          : null;
+        linkPanel.style.display = 'block';
+        spotsNav.classList.add('vrl-nav-visible');
+        currentSpotIndex = -1;
+        renderSpotsNav();
+        adjustPanelBoundary();
+      } else {
+        spotsNavRange = null;
+        spotsNav.classList.remove('vrl-nav-visible');
+        adjustPanelBoundary();
+      }
+    });
+
     // Replaced SVG markup with absolute path coordinates using direct currentColor fill
     const panelButton = document.createElement('button');
     panelButton.className = 'vrl-toolbar-btn';
@@ -274,6 +443,11 @@
     const linkPanel = document.createElement('div');
     linkPanel.id = 'vrlLinkPanel';
     linkPanel.innerHTML = `
+      <div id="vrlSpotsNav">
+        <button class="vrl-spots-nav-arrow" id="vrlSpotsPrev">&#8249;</button>
+        <div class="vrl-spots-nav-list" id="vrlSpotsNavList"></div>
+        <button class="vrl-spots-nav-arrow" id="vrlSpotsNext">&#8250;</button>
+      </div>
       <div class="vrl-doc-search-label">Document Search</div>
       <div class="vrl-doc-search-row">
         <input class="vrl-doc-search-input input-type"   id="vrlSearchType"   type="text" placeholder="Type" />
@@ -287,6 +461,112 @@
     toolbar.appendChild(linkPanel);
 
     document.body.appendChild(toolbar);
+
+    const undoStack = [];
+
+    document.addEventListener('vrl-anchor-added', function (e) {
+      undoStack.push(e.detail.id);
+      undoButton.disabled = false;
+      renderSpotsNav();
+    });
+
+    undoButton.addEventListener('click', function () {
+      while (undoStack.length > 0) {
+        const id = undoStack.pop();
+        const el = document.querySelector(`note-wrapper[data-vrl-id="${id}"]`);
+        if (el && el.isConnected) {
+          const parent = el.parentNode;
+          el.remove();
+          if (parent) parent.normalize();
+          break;
+        }
+      }
+      if (undoStack.length === 0) undoButton.disabled = true;
+      renderSpotsNav();
+    });
+
+    let currentSpotIndex = -1;
+    let spotsNavRange = null;
+
+    function getAllSpots() {
+      const all = Array.from(document.querySelectorAll('note-wrapper'));
+      if (!spotsNavRange) return all;
+      return all.filter(nw => spotsNavRange.intersectsNode(nw));
+    }
+
+    function renderSpotsNav() {
+      const spotsNav = document.getElementById('vrlSpotsNav');
+      if (!spotsNav || !spotsNav.classList.contains('vrl-nav-visible')) return;
+
+      const spots = getAllSpots();
+      const n = spots.length;
+      const navList = document.getElementById('vrlSpotsNavList');
+      const prevBtn = document.getElementById('vrlSpotsPrev');
+      const nextBtn = document.getElementById('vrlSpotsNext');
+
+      navList.innerHTML = '';
+
+      if (n === 0) {
+        const empty = document.createElement('span');
+        empty.className = 'vrl-spots-nav-ellipsis';
+        empty.textContent = 'No spots';
+        navList.appendChild(empty);
+        prevBtn.disabled = true;
+        nextBtn.disabled = true;
+        return;
+      }
+
+      // ≤7: show all; >7: first 3 + ellipsis + last 3
+      const items = n <= 7
+        ? Array.from({ length: n }, (_, i) => i)
+        : [0, 1, 2, '…', n - 3, n - 2, n - 1];
+
+      items.forEach(function (item) {
+        if (item === '…') {
+          const el = document.createElement('span');
+          el.className = 'vrl-spots-nav-ellipsis';
+          el.textContent = '…';
+          navList.appendChild(el);
+        } else {
+          const btn = document.createElement('button');
+          btn.className = 'vrl-spots-nav-item' + (item === currentSpotIndex ? ' vrl-nav-current' : '');
+          btn.textContent = item + 1;
+          btn.addEventListener('click', function () { navigateToSpot(item); });
+          navList.appendChild(btn);
+        }
+      });
+
+      prevBtn.disabled = currentSpotIndex <= 0;
+      nextBtn.disabled = currentSpotIndex >= n - 1;
+    }
+
+    function navigateToSpot(index) {
+      const spots = getAllSpots();
+      if (index < 0 || index >= spots.length) return;
+
+      const prevSelected = document.querySelector('.vrl-spot > span.vrl-spot-selected');
+      if (prevSelected) prevSelected.classList.remove('vrl-spot-selected');
+
+      currentSpotIndex = index;
+      const target = spots[index];
+      const span = target.querySelector('span');
+      if (span) {
+        span.classList.add('vrl-spot-selected');
+        const rect = span.getBoundingClientRect();
+        const inViewport = rect.top >= 0 && rect.bottom <= window.innerHeight
+                        && rect.left >= 0 && rect.right <= window.innerWidth;
+        if (!inViewport) span.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+      renderSpotsNav();
+    }
+
+    document.getElementById('vrlSpotsPrev').addEventListener('click', function () {
+      navigateToSpot(currentSpotIndex - 1);
+    });
+
+    document.getElementById('vrlSpotsNext').addEventListener('click', function () {
+      navigateToSpot(currentSpotIndex === -1 ? 0 : currentSpotIndex + 1);
+    });
 
     function searchDocuments(type, number, year, entity) {
       const resultsEl = document.getElementById('vrlDocResults');
@@ -426,13 +706,14 @@
         });
         console.log(`🧹 Cleaned ${deletedCount} custom tag wrappers.`);
         container.normalize();
+        renderSpotsNav();
         adjustPanelBoundary();
       } else {
         console.log("No targets detected inside the selected scope.");
       }
     });
 
-    saveButton.addEventListener('click', function () {
+    function doSave() {
       const clone = document.documentElement.cloneNode(true);
 
       ['vindexrlScript1', 'vindexrl-toolbar'].forEach(id => {
@@ -451,6 +732,29 @@
       } else {
         console.error('No opener window found — open this page from the document editor.');
       }
+    }
+
+    saveButton.addEventListener('click', function () {
+      const overlay = document.createElement('div');
+      overlay.className = 'vrl-confirm-overlay';
+      overlay.innerHTML = `
+        <div class="vrl-confirm-box">
+          <div class="vrl-confirm-title">Save document</div>
+          <div class="vrl-confirm-msg">This will overwrite the current saved version. Continue?</div>
+          <div class="vrl-confirm-actions">
+            <button class="vrl-confirm-cancel">Cancel</button>
+            <button class="vrl-confirm-save">Save</button>
+          </div>
+        </div>
+      `;
+
+      overlay.querySelector('.vrl-confirm-cancel').addEventListener('click', () => overlay.remove());
+      overlay.querySelector('.vrl-confirm-save').addEventListener('click', () => {
+        overlay.remove();
+        doSave();
+      });
+
+      document.body.appendChild(overlay);
     });
 
     window.addEventListener('resize', adjustPanelBoundary);

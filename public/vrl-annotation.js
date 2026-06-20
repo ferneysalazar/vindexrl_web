@@ -1,14 +1,66 @@
 
+      /**
+       * vrl-annotation.js
+       *
+       * Annotation anchor engine injected into HTML documents rendered by the VRL viewer.
+       * Provides three keyboard+mouse placement modes for inserting <note-wrapper> anchors
+       * (red dot markers) into the document without disturbing surrounding content:
+       *
+       *  Mode 1 — Ctrl+drag:  expand selection to complete structural block(s), then wrap
+       *  Mode 2 — Alt+click:  inline caret placement at exact click position
+       *  Mode 3 — Shift+click: block-density placement before/after the nearest block
+       *
+       * Cursor feedback (zoom-in / text / crosshair) signals which mode is active.
+       * A CSS override fixes Chrome/Firefox table cell-selection that otherwise blocks
+       * text-range creation while Ctrl is held.
+       */
       (function () {
       if (typeof window === 'undefined' || !document) return;
 
+      // Semantic block elements used as expansion targets and density anchors.
       const BLOCK_SELECTOR = 'p, div, h1, h2, h3, section, article, li';
 
+      // Default 70% opacity for all spot indicators; selected state is full opacity + double size.
+      const spotStyle = document.createElement('style');
+      spotStyle.textContent = `
+        .vrl-spot > span {
+          opacity: 0.7;
+          transition: opacity 0.2s ease, font-size 0.2s ease;
+        }
+        .vrl-spot > span.vrl-spot-selected {
+          opacity: 1 !important;
+          font-size: 40px !important;
+        }
+      `;
+      document.head.appendChild(spotStyle);
+
+      let selectedSpotEl = null;
+
+      // Single-selection: plain click on a spot indicator selects it and deselects any previous one.
+      document.addEventListener('click', function (event) {
+        if (event.altKey || event.shiftKey || event.ctrlKey || event.metaKey) return;
+        const target = event.target;
+        if (!target.parentElement || !target.parentElement.classList.contains('vrl-spot')) return;
+        event.stopPropagation();
+        if (selectedSpotEl && selectedSpotEl !== target) {
+          selectedSpotEl.classList.remove('vrl-spot-selected');
+        }
+        if (selectedSpotEl === target) {
+          target.classList.remove('vrl-spot-selected');
+          selectedSpotEl = null;
+        } else {
+          target.classList.add('vrl-spot-selected');
+          selectedSpotEl = target;
+        }
+      });
+
+      // Creates a <note-wrapper> element containing a red dot (•) anchor indicator.
       function createNoteWrapper(status = 'empty-anchor') {
         const wrapper = document.createElement('note-wrapper');
       wrapper.style.display = 'contents';
       wrapper.setAttribute('data-status', status);
       wrapper.setAttribute('data-timestamp', Date.now());
+      wrapper.setAttribute('data-vrl-id', crypto.randomUUID());
       wrapper.classList.add('vrl-spot');
 
       const redSpot = document.createElement('span');
@@ -28,6 +80,8 @@
       return wrapper;
       }
 
+      // Mode 1: Expands the current selection to the common ancestor of the
+      // outermost semantic blocks it touches. No-ops when within a single block.
       function expandSelectionToCompleteTags() {
         const selection = window.getSelection();
         if (!selection || selection.rangeCount === 0) return;
@@ -71,6 +125,8 @@
         console.log("⚡ Mode 1: Range expanded to complete structural tags:", commonAncestor.tagName);
       }
 
+        // Mode 2: Inserts a <note-wrapper> inline at the exact text caret position
+        // under (x, y), using caretPositionFromPoint with caretRangeFromPoint fallback.
         function executeMode2CaretPlacement(x, y) {
           let range = null;
 
@@ -95,6 +151,7 @@
 
         try {
           range.insertNode(noteWrapper);
+          document.dispatchEvent(new CustomEvent('vrl-anchor-added', { detail: { id: noteWrapper.dataset.vrlId } }));
         console.log("⚡ Mode 2: Inserted inline note-wrapper with red spot at precision caret.");
           } catch (error) {
           console.error("Mode 2 insertion failed due to strict native text node locking:", error);
@@ -102,6 +159,9 @@
         }
       }
 
+        // Mode 3: Places a block-level <note-wrapper> before or after the nearest
+        // semantic block based on where within the block the click landed (<50% → before,
+        // ≥50% → after), measured by character count relative to total block length.
         function executeMode3DensityPlacement(x, y) {
           let offsetNode = null;
         let offset = 0;
@@ -146,8 +206,10 @@
           closestBlock.parentNode.insertBefore(noteWrapper, closestBlock.nextSibling);
         console.log(`⚡ Mode 3: Placed AFTER block (${textPercentage.toFixed(1)}% density detected)`);
         }
+        document.dispatchEvent(new CustomEvent('vrl-anchor-added', { detail: { id: noteWrapper.dataset.vrlId } }));
       }
 
+        // Mode 1 trigger: on Ctrl+mouseup, expand the selection if text was selected.
         document.addEventListener('mouseup', function (event) {
         const isModifierPressed = event.ctrlKey || event.metaKey;
 
@@ -164,6 +226,7 @@
         }, 15);
       });
 
+        // Mode 2/3 trigger: Alt+click → inline caret; Shift+click → block density.
         document.addEventListener('click', function (event) {
         const x = event.clientX;
         const y = event.clientY;
