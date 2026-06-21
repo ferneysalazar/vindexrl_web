@@ -37,7 +37,7 @@
   fetch('/link-types')
     .then(function (res) { return res.json(); })
     .then(function (data) {
-      (Array.isArray(data) ? data : []).forEach(function (lt) {
+      (Array.isArray(data) ? data : Array.isArray(data.data) ? data.data : []).forEach(function (lt) {
         linkTypesMap.set(lt.id, lt);
       });
       console.log(`📋 Loaded ${linkTypesMap.size} link types`);
@@ -184,6 +184,86 @@
       transition: border-color 0.15s;
     }
     .vrl-link-type-select:focus { border-color: rgba(0, 100, 255, 0.4); }
+    .vrl-link-side-group {
+      display: flex;
+      gap: 10px;
+      margin-top: 7px;
+    }
+    .vrl-link-side-label {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 12px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      color: #444;
+      cursor: pointer;
+    }
+    .vrl-link-side-label input[type="radio"] { cursor: pointer; }
+    .vrl-link-text-label {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      color: #888;
+      letter-spacing: 0.06em;
+      margin-top: 8px;
+      margin-bottom: 4px;
+      display: block;
+    }
+    .vrl-link-text-area {
+      width: 100%;
+      border: 1px solid rgba(0, 0, 0, 0.15);
+      border-radius: 5px;
+      padding: 4px 6px;
+      font-size: 12px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: rgba(255, 255, 255, 0.85);
+      color: #333;
+      outline: none;
+      resize: none;
+      box-sizing: border-box;
+      transition: border-color 0.15s;
+      line-height: 1.4;
+    }
+    .vrl-link-text-area:focus { border-color: rgba(0, 100, 255, 0.4); }
+    .vrl-link-text-wrapper { position: relative; }
+    .vrl-link-text-reset {
+      position: absolute;
+      top: 3px;
+      right: 3px;
+      width: 16px;
+      height: 16px;
+      padding: 0;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      color: #bbb;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 3px;
+      transition: color 0.1s, background 0.1s;
+    }
+    .vrl-link-text-reset:hover { color: #555; background: rgba(0,0,0,0.06); }
+    .vrl-link-text-reset[data-tooltip] { position: absolute; }
+    .vrl-link-text-reset[data-tooltip]::after {
+      content: attr(data-tooltip);
+      position: absolute;
+      bottom: calc(100% + 5px);
+      right: 0;
+      transform: scale(0.9);
+      transform-origin: bottom right;
+      background: #1e1e1e;
+      color: #fff;
+      font-size: 11px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      padding: 3px 7px;
+      border-radius: 4px;
+      white-space: nowrap;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.15s, transform 0.15s;
+    }
+    .vrl-link-text-reset[data-tooltip]:hover::after { opacity: 1; transform: scale(1); }
     .vrl-spots-nav-arrow {
       background: transparent;
       border: 1px solid rgba(0, 0, 0, 0.15);
@@ -380,6 +460,8 @@
     .vrl-doc-result-item:last-child { border-bottom: none; }
     .vrl-doc-result-item:hover { background: rgba(0, 100, 255, 0.06); }
     .vrl-doc-result-item:hover .vrl-doc-result-name { color: #1a56cc; }
+    .vrl-doc-result-item.vrl-selected { background: rgba(0, 100, 255, 0.10); }
+    .vrl-doc-result-item.vrl-selected .vrl-doc-result-name { color: #1a56cc; font-weight: 500; }
     .vrl-doc-result-index {
       flex-shrink: 0;
       min-width: 16px;
@@ -639,6 +721,31 @@
           <select class="vrl-link-type-select" id="vrlLinkTypeSelect">
             <option value="">Select link type…</option>
           </select>
+          <span class="vrl-link-text-label">Side of the link</span>
+          <div class="vrl-link-side-group">
+            <label class="vrl-link-side-label">
+              <input type="radio" name="vrlLinkSide" value="active" checked /> Active side
+            </label>
+            <label class="vrl-link-side-label">
+              <input type="radio" name="vrlLinkSide" value="passive" /> Passive side
+            </label>
+          </div>
+          <span class="vrl-link-text-label">Document Gender</span>
+          <div class="vrl-link-side-group">
+            <label class="vrl-link-side-label">
+              <input type="radio" name="vrlLinkGender" value="masculine" /> Masculine
+            </label>
+            <label class="vrl-link-side-label">
+              <input type="radio" name="vrlLinkGender" value="feminine" checked /> Femenine
+            </label>
+          </div>
+          <span class="vrl-link-text-label">Link Text</span>
+          <div class="vrl-link-text-wrapper">
+            <textarea class="vrl-link-text-area" id="vrlLinkText" rows="2"></textarea>
+            <button class="vrl-link-text-reset" id="vrlLinkTextReset" data-tooltip="Reset to calculated value">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+            </button>
+          </div>
         </div>
       </div>
       <div class="vrl-doc-search-label">Document Search</div>
@@ -832,6 +939,27 @@
       syncLinkPropsSpotId();
     }
 
+    // Tracks the document name selected from the search results list.
+    let selectedDocName = null;
+
+    // When true the user has manually edited the Link Text field; auto-compute is suppressed.
+    let linkTextUserEdited = false;
+
+    // Recomputes the Link Text textarea from the current link type, gender, and selected document.
+    // Skips silently if the user has manually edited the field.
+    function computeLinkText() {
+      if (linkTextUserEdited) return;
+      const textarea = document.getElementById('vrlLinkText');
+      if (!textarea) return;
+      const sel = document.getElementById('vrlLinkTypeSelect');
+      const linkType = sel ? linkTypesMap.get(sel.value) : null;
+      const activeVerb = linkType ? (linkType.active_verb || linkType.name || '') : '';
+      const genderEl = document.querySelector('input[name="vrlLinkGender"]:checked');
+      const article = genderEl && genderEl.value === 'masculine' ? 'el' : 'la';
+      const parts = [activeVerb, selectedDocName ? (article + ' ' + selectedDocName) : ''].filter(Boolean);
+      textarea.value = parts.join(' ');
+    }
+
     // Rebuilds the link type <select> from the cached linkTypesMap.
     // Called each time the form is expanded so it always reflects the latest data.
     function populateLinkTypeSelect() {
@@ -898,6 +1026,8 @@
       const resultsEl = document.getElementById('vrlDocResults');
       resultsEl.style.display = 'block';
       resultsEl.innerHTML = '<div class="vrl-doc-results-msg">Searching…</div>';
+      selectedDocName = null;
+      computeLinkText();
 
       if (!window.opener) {
         resultsEl.innerHTML = '<div class="vrl-doc-results-msg">No opener window.</div>';
@@ -940,6 +1070,31 @@
         }).join('');
       }
       adjustPanelBoundary();
+    });
+
+    document.getElementById('vrlLinkText').addEventListener('input', function () {
+      linkTextUserEdited = true;
+    });
+
+    document.getElementById('vrlLinkTextReset').addEventListener('click', function () {
+      linkTextUserEdited = false;
+      computeLinkText();
+    });
+
+    document.getElementById('vrlLinkTypeSelect').addEventListener('change', computeLinkText);
+
+    document.getElementById('vrlLinkProps').addEventListener('change', function (e) {
+      if (e.target.name === 'vrlLinkGender') computeLinkText();
+    });
+
+    document.getElementById('vrlDocResults').addEventListener('click', function (e) {
+      const item = e.target.closest('.vrl-doc-result-item');
+      if (!item) return;
+      document.querySelectorAll('.vrl-doc-result-item.vrl-selected')
+        .forEach(function (el) { el.classList.remove('vrl-selected'); });
+      item.classList.add('vrl-selected');
+      selectedDocName = item.querySelector('.vrl-doc-result-name')?.textContent || null;
+      computeLinkText();
     });
 
     document.getElementById('vrlSearchDocsBtn').addEventListener('click', function () {
