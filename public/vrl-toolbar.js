@@ -26,6 +26,26 @@
  *    opener in response to 'vrl-search-documents' requests.
  */
 (function () {
+  // ---------------------------------------------------------------------------
+  // Link types cache
+  // ---------------------------------------------------------------------------
+  // Fetched once on script load (before DOMContentLoaded) so the data is ready
+  // by the time any toolbar function needs it. Stored as a Map keyed by id for
+  // O(1) lookup. Will be passed as a parameter to toolbar functions that need it.
+  const linkTypesMap = new Map();
+
+  fetch('/link-types')
+    .then(function (res) { return res.json(); })
+    .then(function (data) {
+      (Array.isArray(data) ? data : []).forEach(function (lt) {
+        linkTypesMap.set(lt.id, lt);
+      });
+      console.log(`📋 Loaded ${linkTypesMap.size} link types`);
+    })
+    .catch(function (err) {
+      console.error('Failed to load link types:', err);
+    });
+
   /**
    * Builds the entire toolbar DOM, wires all event listeners, and appends the
    * toolbar to document.body. Called once after DOMContentLoaded (or immediately
@@ -111,13 +131,59 @@
     /* Hidden by default; .vrl-nav-visible switches it to flex when the toggle is on. */
     #vrlSpotsNav {
       display: none;
-      align-items: center;
-      gap: 3px;
+      flex-direction: column;
+      gap: 0;
       padding-bottom: 8px;
       margin-bottom: 8px;
       border-bottom: 1px solid rgba(0, 0, 0, 0.08);
     }
     #vrlSpotsNav.vrl-nav-visible { display: flex; }
+    /* Inner row: prev arrow, number list, next arrow, expand toggle. */
+    #vrlSpotsNavRow {
+      display: flex;
+      align-items: center;
+      gap: 3px;
+    }
+    /* Link properties form — hidden until toggle is activated. */
+    #vrlLinkProps {
+      display: none;
+      padding-top: 8px;
+      margin-top: 6px;
+      border-top: 1px solid rgba(0, 0, 0, 0.06);
+    }
+    #vrlLinkProps.vrl-expanded { display: block; }
+    .vrl-link-props-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: #888;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 5px;
+    }
+    .vrl-link-props-id {
+      font-size: 10px;
+      color: #ccc;
+      font-family: monospace;
+      margin-bottom: 6px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .vrl-link-type-select {
+      width: 100%;
+      border: 1px solid rgba(0, 0, 0, 0.15);
+      border-radius: 5px;
+      padding: 4px 6px;
+      font-size: 12px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: rgba(255, 255, 255, 0.85);
+      color: #333;
+      outline: none;
+      cursor: pointer;
+      box-sizing: border-box;
+      transition: border-color 0.15s;
+    }
+    .vrl-link-type-select:focus { border-color: rgba(0, 100, 255, 0.4); }
     .vrl-spots-nav-arrow {
       background: transparent;
       border: 1px solid rgba(0, 0, 0, 0.15);
@@ -138,9 +204,29 @@
     }
     .vrl-spots-nav-arrow:hover { background: rgba(0, 0, 0, 0.06); }
     .vrl-spots-nav-arrow:disabled { opacity: 0.3; cursor: not-allowed; pointer-events: none; }
+    .vrl-spots-nav-arrow[data-tooltip]::after {
+      content: attr(data-tooltip);
+      position: absolute;
+      bottom: -28px;
+      left: 50%;
+      transform: translateX(-50%) scale(0.9);
+      background: #1e1e1e;
+      color: #fff;
+      font-size: 11px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      padding: 3px 7px;
+      border-radius: 4px;
+      white-space: nowrap;
+      opacity: 0;
+      pointer-events: none;
+      transition: all 0.15s ease;
+      z-index: 1000001;
+    }
+    .vrl-spots-nav-arrow[data-tooltip]:hover::after { opacity: 1; transform: translateX(-50%) scale(1); }
     .vrl-spots-nav-list {
       display: flex;
       align-items: center;
+      justify-content: center;
       gap: 1px;
       flex: 1;
     }
@@ -539,9 +625,21 @@
     linkPanel.id = 'vrlLinkPanel';
     linkPanel.innerHTML = `
       <div id="vrlSpotsNav">
-        <button class="vrl-spots-nav-arrow" id="vrlSpotsPrev">&#8249;</button>
-        <div class="vrl-spots-nav-list" id="vrlSpotsNavList"></div>
-        <button class="vrl-spots-nav-arrow" id="vrlSpotsNext">&#8250;</button>
+        <div id="vrlSpotsNavRow">
+          <button class="vrl-spots-nav-arrow" id="vrlSpotsPrev" data-tooltip="Previous spot">&#8249;</button>
+          <div class="vrl-spots-nav-list" id="vrlSpotsNavList"></div>
+          <button class="vrl-spots-nav-arrow" id="vrlSpotsNext" data-tooltip="Next spot">&#8250;</button>
+          <button class="vrl-spots-nav-arrow" id="vrlLinkPropsToggle" data-tooltip="Link properties">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+          </button>
+        </div>
+        <div id="vrlLinkProps">
+          <div class="vrl-link-props-title">Link Properties</div>
+          <div class="vrl-link-props-id" id="vrlLinkPropsSpotId">—</div>
+          <select class="vrl-link-type-select" id="vrlLinkTypeSelect">
+            <option value="">Select link type…</option>
+          </select>
+        </div>
       </div>
       <div class="vrl-doc-search-label">Document Search</div>
       <div class="vrl-doc-search-row">
@@ -731,6 +829,32 @@
         if (!inViewport) span.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
       renderSpotsNav();
+      syncLinkPropsSpotId();
+    }
+
+    // Rebuilds the link type <select> from the cached linkTypesMap.
+    // Called each time the form is expanded so it always reflects the latest data.
+    function populateLinkTypeSelect() {
+      const sel = document.getElementById('vrlLinkTypeSelect');
+      if (!sel) return;
+      const previous = sel.value;
+      sel.innerHTML = '<option value="">Select link type…</option>';
+      linkTypesMap.forEach(function (lt) {
+        const opt = document.createElement('option');
+        opt.value = lt.id;
+        opt.textContent = lt.name || lt.label || String(lt.id);
+        sel.appendChild(opt);
+      });
+      if (previous) sel.value = previous;
+    }
+
+    // Updates the spot ID label to reflect the currently navigated spot.
+    function syncLinkPropsSpotId() {
+      const el = document.getElementById('vrlLinkPropsSpotId');
+      if (!el) return;
+      const spots = getAllSpots();
+      const spot = currentSpotIndex >= 0 ? spots[currentSpotIndex] : null;
+      el.textContent = spot ? (spot.dataset.vrlId || '—') : '—';
     }
 
     // Prev arrow: step back one spot. Disabled at index 0 so this will not fire
@@ -743,6 +867,22 @@
     // otherwise advance by one.
     document.getElementById('vrlSpotsNext').addEventListener('click', function () {
       navigateToSpot(currentSpotIndex === -1 ? 0 : currentSpotIndex + 1);
+    });
+
+    // Expand / collapse the Link Properties form.
+    // The SVG chevron flips between down (collapsed) and up (expanded).
+    // On expand, populate the select from linkTypesMap and sync the spot ID label.
+    document.getElementById('vrlLinkPropsToggle').addEventListener('click', function () {
+      const form = document.getElementById('vrlLinkProps');
+      const expanded = form.classList.toggle('vrl-expanded');
+      this.querySelector('svg path').setAttribute('d',
+        expanded ? 'm6 15 6-6 6 6' : 'm6 9 6 6 6-6'
+      );
+      if (expanded) {
+        populateLinkTypeSelect();
+        syncLinkPropsSpotId();
+      }
+      adjustPanelBoundary();
     });
 
     // -------------------------------------------------------------------------
