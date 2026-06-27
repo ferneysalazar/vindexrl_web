@@ -33,6 +33,14 @@
     || 'http://localhost:3000/api';
 
   // ---------------------------------------------------------------------------
+  // Document links pre-loaded by the opener window before this window was opened.
+  // The opener fetches GET /documentLinks?srcId=<id> and stores the result on
+  // window.vrlDocumentLinks so this child window can access it via window.opener.
+  const documentLinks = (window.opener && Array.isArray(window.opener.vrlDocumentLinks))
+    ? window.opener.vrlDocumentLinks
+    : [];
+
+  // ---------------------------------------------------------------------------
   // Link types cache
   // ---------------------------------------------------------------------------
   // Fetched once on script load (before DOMContentLoaded) so the data is ready

@@ -88,7 +88,17 @@ export default function DocumentForm({ item, onSave, onCancel }) {
 
   const htmlWindowRef = useRef(null);
 
-  const handleOpenHtmlEditor = () => {
+  const handleOpenHtmlEditor = async () => {
+    const srcId = item?.id;
+    window.vrlDocumentLinks = [];
+    if (srcId) {
+      try {
+        const res = await fetch(`http://localhost:3000/api/documentLinks?srcId=${srcId}`);
+        if (res.ok) window.vrlDocumentLinks = await res.json();
+      } catch (e) {
+        console.warn('Could not fetch document links:', e);
+      }
+    }
     const win = window.open('/html-files/example1', '_blank');
     htmlWindowRef.current = win;
   };
