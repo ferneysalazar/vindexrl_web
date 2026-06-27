@@ -649,6 +649,51 @@
     }
     .vrl-link-cancel-btn:hover { background: rgba(0, 0, 0, 0.05); }
     .vrl-link-cancel-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+    /* --- Nota modificatoria (paragraph view) --- */
+    .note-modifier {
+      background-color: #fff8f2;
+      border-left: 4px solid #e67e22;
+      padding: 12px 16px;
+      margin-top: 15px;
+      margin-bottom: 5px;
+      font-family: Arial, sans-serif;
+      font-size: 13.5px;
+      line-height: 1.5;
+      color: #555555;
+      font-style: italic;
+      border-radius: 0 4px 4px 0;
+    }
+    .note-modifier a {
+      color: #1a5276;
+      text-decoration: underline;
+      font-weight: bold;
+    }
+    .note-modifier a:hover {
+      color: #2471a3;
+    }
+    .note-modifier.vrl-spot-selected {
+      outline: 2px dashed #e67e22;
+      outline-offset: 2px;
+    }
+    .vrl-link-doc-id-row {
+      display: flex;
+      align-items: baseline;
+      gap: 4px;
+      margin-bottom: 8px;
+    }
+    .vrl-link-doc-id-label {
+      font-size: 10px;
+      color: #bbb;
+      white-space: nowrap;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    .vrl-link-doc-id-value {
+      font-size: 10px;
+      font-family: monospace;
+      color: #bbb;
+      word-break: break-all;
+    }
     `;
     document.head.appendChild(style);
 
@@ -764,15 +809,14 @@
     `;
     mainRow.appendChild(panelButton);
 
-    // View toggle — switches between red-spot anchors and nota-modificatoria paragraphs.
+    // View toggle — switches between red-spot anchors and note-modifier paragraphs.
+    const VIEW_ICON_SPOTS = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 10H3M21 6H3M21 14H3M17 18H3"/></svg>`;
+    const VIEW_ICON_LINKS = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>`;
+
     const viewToggleButton = document.createElement('button');
     viewToggleButton.className = 'vrl-toolbar-btn';
     viewToggleButton.setAttribute('data-tooltip', 'Switch to link view');
-    viewToggleButton.innerHTML = `
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M17 10H3M21 6H3M21 14H3M17 18H3"/>
-    </svg>
-    `;
+    viewToggleButton.innerHTML = VIEW_ICON_SPOTS;
     mainRow.appendChild(viewToggleButton);
 
     // Visual separator between the editing buttons and the save button.
@@ -852,6 +896,10 @@
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
             </button>
           </div>
+          <div class="vrl-link-doc-id-row">
+            <span class="vrl-link-doc-id-label">Target ID:</span>
+            <span class="vrl-link-doc-id-value" id="vrlSelectedDocIdValue">—</span>
+          </div>
           <div class="vrl-link-form-actions">
             <button class="vrl-link-cancel-btn" id="vrlLinkCancelBtn" disabled>Cancel</button>
             <button class="vrl-link-save-btn" id="vrlLinkSaveBtn" disabled>Save link</button>
@@ -885,7 +933,7 @@
     const undoStack = [];
 
     // -------------------------------------------------------------------------
-    // Document view toggle — spots ↔ nota-modificatoria paragraphs
+    // Document view toggle — spots ↔ note-modifier paragraphs
     // -------------------------------------------------------------------------
     let viewMode = 'spots'; // 'spots' | 'paragraphs'
     const noteWrapperStore = new Map(); // data-vrl-id → cloned note-wrapper element
@@ -896,12 +944,20 @@
           const id = nw.dataset.vrlId;
           noteWrapperStore.set(id, nw.cloneNode(true));
           const div = document.createElement('div');
-          div.className = 'nota-modificatoria';
+          div.className = 'note-modifier';
           div.setAttribute('data-vrl-id', id);
-          div.textContent = (linkPropsStore[id] && linkPropsStore[id].linkText) || '';
+          const state = linkPropsStore[id] || {};
+          const rawText = state.linkText || '';
+          const docId = state.selectedDocId || '';
+          div.innerHTML = rawText.replace(/\{([^}]+)\}/g, function (_, inner) {
+            return docId
+              ? '<a href="viewDocument?docId=' + docId + '">' + inner + '</a>'
+              : inner;
+          });
           nw.parentNode.replaceChild(div, nw);
         });
         viewMode = 'paragraphs';
+        viewToggleButton.innerHTML = VIEW_ICON_LINKS;
         viewToggleButton.classList.add('vrl-active');
         viewToggleButton.setAttribute('data-tooltip', 'Switch to spots view');
         // Clear spot selection since note-wrappers are no longer in the DOM.
@@ -910,7 +966,7 @@
         renderSpotsNav();
         syncLinkPropsSpotId();
       } else {
-        document.querySelectorAll('div.nota-modificatoria[data-vrl-id]').forEach(function (div) {
+        document.querySelectorAll('div.note-modifier[data-vrl-id]').forEach(function (div) {
           const id = div.dataset.vrlId;
           const original = noteWrapperStore.get(id);
           if (original) {
@@ -919,6 +975,7 @@
           }
         });
         viewMode = 'spots';
+        viewToggleButton.innerHTML = VIEW_ICON_SPOTS;
         viewToggleButton.classList.remove('vrl-active');
         viewToggleButton.setAttribute('data-tooltip', 'Switch to link view');
         currentSpotIndex = -1;
@@ -995,7 +1052,7 @@
      * range boundary — the right semantics for "spots within this selection".
      */
     function getAllSpots() {
-      const all = Array.from(document.querySelectorAll('note-wrapper'));
+      const all = Array.from(document.querySelectorAll('note-wrapper, .note-modifier'));
       if (!spotsNavRange) return all;
       return all.filter(nw => spotsNavRange.intersectsNode(nw));
     }
@@ -1097,14 +1154,23 @@
       baselineStore[target.dataset.vrlId] = snapshot;
       linkPropsStore[target.dataset.vrlId] = { ...snapshot };
       isDirty = false;
+      // For note-wrapper: highlight and scroll to the inner span (the red dot).
+      // For note-modifier: scroll to the element itself and add a highlight class.
       const span = target.querySelector('span');
       if (span) {
         span.classList.add('vrl-spot-selected');
-        // Only scroll if the red dot is outside the current viewport.
         const rect = span.getBoundingClientRect();
         const inViewport = rect.top >= 0 && rect.bottom <= window.innerHeight
                         && rect.left >= 0 && rect.right <= window.innerWidth;
         if (!inViewport) span.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      } else {
+        document.querySelectorAll('.note-modifier.vrl-spot-selected')
+          .forEach(el => el.classList.remove('vrl-spot-selected'));
+        target.classList.add('vrl-spot-selected');
+        const rect = target.getBoundingClientRect();
+        const inViewport = rect.top >= 0 && rect.bottom <= window.innerHeight
+                        && rect.left >= 0 && rect.right <= window.innerWidth;
+        if (!inViewport) target.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
       renderSpotsNav();
       syncLinkPropsSpotId();
@@ -1191,6 +1257,7 @@
       linkTextUserEdited = false;
       selectedDocId   = null;
       selectedDocName = null;
+      syncSelectedDocDisplay();
 
       if (!state) return;
 
@@ -1207,6 +1274,7 @@
       linkTextUserEdited = !!state.linkTextUserEdited;
       selectedDocId      = state.selectedDocId   || null;
       selectedDocName    = state.selectedDocName || null;
+      syncSelectedDocDisplay();
     }
 
     // Recomputes the Link Text textarea from the current link type, gender, and selected document.
@@ -1228,9 +1296,14 @@
       const parts = [
         activeVerb,
         articlePhrase,
-        selectedDocName ? (article + ' ' + selectedDocName) : '',
+        selectedDocName ? (article + ' {' + selectedDocName + '}') : '',
       ].filter(Boolean);
       textarea.value = parts.join(' ');
+    }
+
+    function syncSelectedDocDisplay() {
+      const el = document.getElementById('vrlSelectedDocIdValue');
+      if (el) el.textContent = selectedDocId || '—';
     }
 
     // Rebuilds the link type <select> from the cached linkTypesMap.
@@ -1398,6 +1471,7 @@
       item.classList.add('vrl-selected');
       selectedDocName = item.querySelector('.vrl-doc-result-name')?.textContent || null;
       selectedDocId = item.dataset.id || null;
+      syncSelectedDocDisplay();
       computeLinkText();
       saveLinkPropsState();
     });

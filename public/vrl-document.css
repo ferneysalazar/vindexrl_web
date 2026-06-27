@@ -1,5 +1,5 @@
 /* Estilo estético y formal para las notas de vigencia / modificación */
-.nota-modificatoria {
+.note-modifier {
     background-color: #fff8f2;
     border-left: 4px solid #e67e22;
     padding: 12px 16px;
@@ -12,11 +12,11 @@
     font-style: italic;
     border-radius: 0 4px 4px 0;
 }
-.nota-modificatoria a {
+.note-modifier a {
     color: #1a5276;
     text-decoration: underline;
     font-weight: bold;
 }
-.nota-modificatoria a:hover {
+.note-modifier a:hover {
     color: #2471a3;
 }
