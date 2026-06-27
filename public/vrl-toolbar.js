@@ -776,6 +776,7 @@
           <button class="vrl-spots-nav-arrow" id="vrlSpotsPrev" data-tooltip="Previous spot">&#8249;</button>
           <div class="vrl-spots-nav-list" id="vrlSpotsNavList"></div>
           <button class="vrl-spots-nav-arrow" id="vrlSpotsNext" data-tooltip="Next spot">&#8250;</button>
+          <div class="vrl-toolbar-sep"></div>
           <button class="vrl-spots-nav-arrow" id="vrlLinkPropsToggle" data-tooltip="Link properties">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
           </button>
@@ -1001,6 +1002,7 @@
 
       currentSpotIndex = index;
       const target = spots[index];
+      loadLinkPropsState(target.dataset.vrlId);
       const span = target.querySelector('span');
       if (span) {
         span.classList.add('vrl-spot-selected');
@@ -1020,6 +1022,64 @@
 
     // When true the user has manually edited the Link Text field; auto-compute is suppressed.
     let linkTextUserEdited = false;
+
+    // -------------------------------------------------------------------------
+    // Per-spot form state store
+    // -------------------------------------------------------------------------
+    // Keyed by spot data-vrl-id. Persists form values while the toolbar is open
+    // so navigating away and back restores exactly what the user had entered.
+    const linkPropsStore = {};
+
+    function saveLinkPropsState() {
+      const spots = getAllSpots();
+      const spot = currentSpotIndex >= 0 ? spots[currentSpotIndex] : null;
+      if (!spot || !spot.dataset.vrlId) return;
+      linkPropsStore[spot.dataset.vrlId] = {
+        linkTypeId:         document.getElementById('vrlLinkTypeSelect').value,
+        linkSide:           document.querySelector('input[name="vrlLinkSide"]:checked')?.value || 'active',
+        linkGender:         document.querySelector('input[name="vrlLinkGender"]:checked')?.value || 'feminine',
+        articleToggle:      document.getElementById('vrlArticleToggle').checked,
+        articleText:        document.getElementById('vrlArticleText').value,
+        articleAnchor:      document.getElementById('vrlArticleAnchor').value,
+        linkText:           document.getElementById('vrlLinkText').value,
+        linkTextUserEdited,
+        selectedDocId,
+        selectedDocName,
+      };
+    }
+
+    function loadLinkPropsState(spotId) {
+      const state = linkPropsStore[spotId];
+
+      // Reset every field to its default before applying stored state.
+      document.getElementById('vrlLinkTypeSelect').value = '';
+      document.querySelector('input[name="vrlLinkSide"][value="active"]').checked = true;
+      document.querySelector('input[name="vrlLinkGender"][value="feminine"]').checked = true;
+      document.getElementById('vrlArticleToggle').checked = false;
+      document.getElementById('vrlArticleFields').classList.remove('vrl-visible');
+      document.getElementById('vrlArticleText').value = '';
+      document.getElementById('vrlArticleAnchor').value = '';
+      document.getElementById('vrlLinkText').value = '';
+      linkTextUserEdited = false;
+      selectedDocId   = null;
+      selectedDocName = null;
+
+      if (!state) return;
+
+      document.getElementById('vrlLinkTypeSelect').value = state.linkTypeId || '';
+      const sideEl = document.querySelector(`input[name="vrlLinkSide"][value="${state.linkSide}"]`);
+      if (sideEl) sideEl.checked = true;
+      const genderEl = document.querySelector(`input[name="vrlLinkGender"][value="${state.linkGender}"]`);
+      if (genderEl) genderEl.checked = true;
+      document.getElementById('vrlArticleToggle').checked = !!state.articleToggle;
+      document.getElementById('vrlArticleFields').classList.toggle('vrl-visible', !!state.articleToggle);
+      document.getElementById('vrlArticleText').value   = state.articleText   || '';
+      document.getElementById('vrlArticleAnchor').value = state.articleAnchor || '';
+      document.getElementById('vrlLinkText').value      = state.linkText      || '';
+      linkTextUserEdited = !!state.linkTextUserEdited;
+      selectedDocId      = state.selectedDocId   || null;
+      selectedDocName    = state.selectedDocName || null;
+    }
 
     // Recomputes the Link Text textarea from the current link type, gender, and selected document.
     // Skips silently if the user has manually edited the field.
@@ -1164,31 +1224,46 @@
 
     document.getElementById('vrlLinkText').addEventListener('input', function () {
       linkTextUserEdited = true;
+      saveLinkPropsState();
     });
 
     document.getElementById('vrlLinkTextReset').addEventListener('click', function () {
       linkTextUserEdited = false;
       computeLinkText();
+      saveLinkPropsState();
     });
 
     document.getElementById('vrlArticleToggle').addEventListener('change', function () {
       document.getElementById('vrlArticleFields').classList.toggle('vrl-visible', this.checked);
       computeLinkText();
+      saveLinkPropsState();
     });
 
-    document.getElementById('vrlArticleText').addEventListener('input', computeLinkText);
+    document.getElementById('vrlArticleText').addEventListener('input', function () {
+      computeLinkText();
+      saveLinkPropsState();
+    });
 
     document.getElementById('vrlArticleText').addEventListener('blur', function () {
       const anchor = document.getElementById('vrlArticleAnchor');
       if (anchor && !anchor.value.trim()) {
         anchor.value = this.value.trim().toLowerCase().replace(/\s+/g, '-');
       }
+      saveLinkPropsState();
     });
 
-    document.getElementById('vrlLinkTypeSelect').addEventListener('change', computeLinkText);
+    document.getElementById('vrlArticleAnchor').addEventListener('input', saveLinkPropsState);
+
+    document.getElementById('vrlLinkTypeSelect').addEventListener('change', function () {
+      computeLinkText();
+      saveLinkPropsState();
+    });
 
     document.getElementById('vrlLinkProps').addEventListener('change', function (e) {
-      if (e.target.name === 'vrlLinkGender') computeLinkText();
+      if (e.target.name === 'vrlLinkGender' || e.target.name === 'vrlLinkSide') {
+        computeLinkText();
+        saveLinkPropsState();
+      }
     });
 
     document.getElementById('vrlDocResults').addEventListener('click', function (e) {
@@ -1200,6 +1275,7 @@
       selectedDocName = item.querySelector('.vrl-doc-result-name')?.textContent || null;
       selectedDocId = item.dataset.id || null;
       computeLinkText();
+      saveLinkPropsState();
     });
 
     // -------------------------------------------------------------------------
