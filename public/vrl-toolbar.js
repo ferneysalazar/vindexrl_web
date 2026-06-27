@@ -629,6 +629,26 @@
     .vrl-link-save-btn.vrl-saved { background: rgba(40, 167, 69, 0.1); border-color: rgba(40, 167, 69, 0.3); color: #28a745; }
     .vrl-link-save-btn.vrl-error { background: rgba(220, 53, 69, 0.08); border-color: rgba(220, 53, 69, 0.3); color: #dc3545; }
     .vrl-link-save-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+    .vrl-link-form-actions {
+      display: flex;
+      gap: 5px;
+      margin-top: 10px;
+    }
+    .vrl-link-form-actions .vrl-link-save-btn { flex: 1; margin-top: 0; }
+    .vrl-link-cancel-btn {
+      flex: 1;
+      padding: 5px 10px;
+      background: transparent;
+      border: 1px solid rgba(0, 0, 0, 0.15);
+      border-radius: 5px;
+      font-size: 12px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      color: #555;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .vrl-link-cancel-btn:hover { background: rgba(0, 0, 0, 0.05); }
+    .vrl-link-cancel-btn:disabled { opacity: 0.35; cursor: not-allowed; }
     `;
     document.head.appendChild(style);
 
@@ -821,7 +841,10 @@
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
             </button>
           </div>
-          <button class="vrl-link-save-btn" id="vrlLinkSaveBtn" disabled>Save link</button>
+          <div class="vrl-link-form-actions">
+            <button class="vrl-link-cancel-btn" id="vrlLinkCancelBtn" disabled>Cancel</button>
+            <button class="vrl-link-save-btn" id="vrlLinkSaveBtn" disabled>Save link</button>
+          </div>
         </div>
       </div>
       <div class="vrl-doc-search-label">Document Search</div>
@@ -969,8 +992,9 @@
       });
 
       // currentSpotIndex <= 0 covers both "at first spot" and "nothing selected" (-1).
-      prevBtn.disabled = currentSpotIndex <= 0;
-      nextBtn.disabled = currentSpotIndex >= n - 1;
+      // Also disable arrows when there are unsaved changes to prevent losing edits.
+      prevBtn.disabled = isDirty || currentSpotIndex <= 0;
+      nextBtn.disabled = isDirty || currentSpotIndex >= n - 1;
     }
 
     /**
@@ -993,6 +1017,7 @@
      * @param {number} index - 0-based position in the getAllSpots() array.
      */
     function navigateToSpot(index) {
+      if (isDirty) return;
       const spots = getAllSpots();
       if (index < 0 || index >= spots.length) return;
 
@@ -1003,6 +1028,10 @@
       currentSpotIndex = index;
       const target = spots[index];
       loadLinkPropsState(target.dataset.vrlId);
+      const snapshot = captureFormState();
+      baselineStore[target.dataset.vrlId] = snapshot;
+      linkPropsStore[target.dataset.vrlId] = { ...snapshot };
+      isDirty = false;
       const span = target.querySelector('span');
       if (span) {
         span.classList.add('vrl-spot-selected');
@@ -1026,15 +1055,15 @@
     // -------------------------------------------------------------------------
     // Per-spot form state store
     // -------------------------------------------------------------------------
-    // Keyed by spot data-vrl-id. Persists form values while the toolbar is open
-    // so navigating away and back restores exactly what the user had entered.
+    // linkPropsStore  — current values keyed by data-vrl-id, updated on every change.
+    // baselineStore   — snapshot taken on navigation (or after save); cancel restores to this.
+    // isDirty         — true when the current spot has unsaved changes.
     const linkPropsStore = {};
+    const baselineStore  = {};
+    let isDirty = false;
 
-    function saveLinkPropsState() {
-      const spots = getAllSpots();
-      const spot = currentSpotIndex >= 0 ? spots[currentSpotIndex] : null;
-      if (!spot || !spot.dataset.vrlId) return;
-      linkPropsStore[spot.dataset.vrlId] = {
+    function captureFormState() {
+      return {
         linkTypeId:         document.getElementById('vrlLinkTypeSelect').value,
         linkSide:           document.querySelector('input[name="vrlLinkSide"]:checked')?.value || 'active',
         linkGender:         document.querySelector('input[name="vrlLinkGender"]:checked')?.value || 'feminine',
@@ -1046,6 +1075,30 @@
         selectedDocId,
         selectedDocName,
       };
+    }
+
+    function updateFormActionButtons() {
+      const spots = getAllSpots();
+      const spot = currentSpotIndex >= 0 ? spots[currentSpotIndex] : null;
+      const cancelBtn = document.getElementById('vrlLinkCancelBtn');
+      const saveBtn   = document.getElementById('vrlLinkSaveBtn');
+      if (cancelBtn) cancelBtn.disabled = !isDirty;
+      if (saveBtn) {
+        saveBtn.textContent = (spot && spot.dataset.linkDocumentId) ? 'Update link' : 'Save link';
+        saveBtn.disabled = !spot;
+      }
+    }
+
+    function saveLinkPropsState() {
+      const spots = getAllSpots();
+      const spot = currentSpotIndex >= 0 ? spots[currentSpotIndex] : null;
+      if (!spot || !spot.dataset.vrlId) return;
+      linkPropsStore[spot.dataset.vrlId] = captureFormState();
+      if (!isDirty) {
+        isDirty = true;
+        updateFormActionButtons();
+        renderSpotsNav();
+      }
     }
 
     function loadLinkPropsState(spotId) {
@@ -1121,18 +1174,14 @@
       if (previous) sel.value = previous;
     }
 
-    // Updates the spot ID label and save button label for the currently navigated spot.
+    // Updates the spot ID label and all form action button states.
     function syncLinkPropsSpotId() {
       const el = document.getElementById('vrlLinkPropsSpotId');
       if (!el) return;
       const spots = getAllSpots();
       const spot = currentSpotIndex >= 0 ? spots[currentSpotIndex] : null;
       el.textContent = spot ? (spot.dataset.vrlId || '—') : '—';
-      const saveBtn = document.getElementById('vrlLinkSaveBtn');
-      if (saveBtn) {
-        saveBtn.textContent = (spot && spot.dataset.linkDocumentId) ? 'Update link' : 'Save link';
-        saveBtn.disabled = !spot;
-      }
+      updateFormActionButtons();
     }
 
     // Prev arrow: step back one spot. Disabled at index 0 so this will not fire
@@ -1302,6 +1351,23 @@
      * On a successful POST the response is expected to contain the new record's id
      * so it can be stored on the spot element for subsequent PUT requests.
      */
+    document.getElementById('vrlLinkCancelBtn').addEventListener('click', function () {
+      const spots = getAllSpots();
+      const spot = currentSpotIndex >= 0 ? spots[currentSpotIndex] : null;
+      if (!spot) return;
+      const spotId = spot.dataset.vrlId;
+      // Restore store to baseline and re-apply to form.
+      if (baselineStore[spotId]) {
+        linkPropsStore[spotId] = { ...baselineStore[spotId] };
+      } else {
+        delete linkPropsStore[spotId];
+      }
+      loadLinkPropsState(spotId);
+      isDirty = false;
+      updateFormActionButtons();
+      renderSpotsNav();
+    });
+
     document.getElementById('vrlLinkSaveBtn').addEventListener('click', function () {
       const spots = getAllSpots();
       const spot = currentSpotIndex >= 0 ? spots[currentSpotIndex] : null;
@@ -1346,6 +1412,11 @@
           if (!isUpdate && data.id) {
             spot.dataset.linkDocumentId = data.id;
           }
+          // Advance baseline so cancel would now restore to this saved state.
+          baselineStore[spot.dataset.vrlId] = { ...linkPropsStore[spot.dataset.vrlId] };
+          isDirty = false;
+          updateFormActionButtons();
+          renderSpotsNav();
           btn.textContent = 'Saved ✓';
           btn.classList.add('vrl-saved');
           setTimeout(function () {
