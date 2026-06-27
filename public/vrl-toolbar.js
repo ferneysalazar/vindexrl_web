@@ -264,6 +264,38 @@
       transition: opacity 0.15s, transform 0.15s;
     }
     .vrl-link-text-reset[data-tooltip]:hover::after { opacity: 1; transform: scale(1); }
+    .vrl-link-article-toggle {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      margin-top: 8px;
+      font-size: 12px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      color: #444;
+      cursor: pointer;
+    }
+    .vrl-link-article-toggle input[type="checkbox"] { cursor: pointer; }
+    .vrl-link-article-fields {
+      display: none;
+      flex-direction: column;
+      gap: 5px;
+      margin-top: 6px;
+    }
+    .vrl-link-article-fields.vrl-visible { display: flex; }
+    .vrl-link-article-input {
+      width: 100%;
+      border: 1px solid rgba(0, 0, 0, 0.15);
+      border-radius: 5px;
+      padding: 4px 6px;
+      font-size: 12px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: rgba(255, 255, 255, 0.85);
+      color: #333;
+      outline: none;
+      box-sizing: border-box;
+      transition: border-color 0.15s;
+    }
+    .vrl-link-article-input:focus { border-color: rgba(0, 100, 255, 0.4); }
     .vrl-spots-nav-arrow {
       background: transparent;
       border: 1px solid rgba(0, 0, 0, 0.15);
@@ -330,6 +362,12 @@
     }
     .vrl-spots-nav-item:hover { background: rgba(0, 0, 0, 0.06); }
     /* Highlighted pill for the currently active spot. */
+    @keyframes vrl-spot-pulse {
+      0%   { transform: scale(1);   text-shadow: none; }
+      35%  { transform: scale(1.5); text-shadow: 0 0 14px rgba(220, 38, 38, 0.75); }
+      100% { transform: scale(1);   text-shadow: none; }
+    }
+    .vrl-spot-pulse { animation: vrl-spot-pulse 0.65s ease-out; }
     .vrl-spots-nav-item.vrl-nav-current {
       background: rgba(0, 100, 255, 0.12);
       color: #1a56cc;
@@ -733,11 +771,20 @@
           <span class="vrl-link-text-label">Document Gender</span>
           <div class="vrl-link-side-group">
             <label class="vrl-link-side-label">
-              <input type="radio" name="vrlLinkGender" value="masculine" /> Masculine
-            </label>
-            <label class="vrl-link-side-label">
               <input type="radio" name="vrlLinkGender" value="feminine" checked /> Femenine
             </label>
+            <label class="vrl-link-side-label">
+              <input type="radio" name="vrlLinkGender" value="masculine" /> Masculine
+            </label>
+          </div>
+          <label class="vrl-link-article-toggle">
+            <input type="checkbox" id="vrlArticleToggle" /> Link to an specific article
+          </label>
+          <div class="vrl-link-article-fields" id="vrlArticleFields">
+            <span class="vrl-link-text-label">Article text</span>
+            <input class="vrl-link-article-input" id="vrlArticleText" type="text" placeholder="Article text…" />
+            <span class="vrl-link-text-label">Article anchor</span>
+            <input class="vrl-link-article-input" id="vrlArticleAnchor" type="text" placeholder="Article anchor…" />
           </div>
           <span class="vrl-link-text-label">Link Text</span>
           <div class="vrl-link-text-wrapper">
@@ -956,7 +1003,16 @@
       const activeVerb = linkType ? (linkType.active_verb || linkType.name || '') : '';
       const genderEl = document.querySelector('input[name="vrlLinkGender"]:checked');
       const article = genderEl && genderEl.value === 'masculine' ? 'el' : 'la';
-      const parts = [activeVerb, selectedDocName ? (article + ' ' + selectedDocName) : ''].filter(Boolean);
+      const articleToggle = document.getElementById('vrlArticleToggle');
+      const articleText = document.getElementById('vrlArticleText');
+      const articlePhrase = (articleToggle && articleToggle.checked && articleText && articleText.value.trim())
+        ? ('el ' + articleText.value.trim() + ' de')
+        : '';
+      const parts = [
+        activeVerb,
+        articlePhrase,
+        selectedDocName ? (article + ' ' + selectedDocName) : '',
+      ].filter(Boolean);
       textarea.value = parts.join(' ');
     }
 
@@ -1080,6 +1136,13 @@
       linkTextUserEdited = false;
       computeLinkText();
     });
+
+    document.getElementById('vrlArticleToggle').addEventListener('change', function () {
+      document.getElementById('vrlArticleFields').classList.toggle('vrl-visible', this.checked);
+      computeLinkText();
+    });
+
+    document.getElementById('vrlArticleText').addEventListener('input', computeLinkText);
 
     document.getElementById('vrlLinkTypeSelect').addEventListener('change', computeLinkText);
 
@@ -1318,6 +1381,15 @@
 
     // Re-check panel boundary whenever the viewport is resized (e.g. device rotation).
     window.addEventListener('resize', adjustPanelBoundary);
+
+    // Pulse the selected spot every 4 seconds to draw attention to it.
+    setInterval(function () {
+      const selected = document.querySelector('.vrl-spot > span.vrl-spot-selected');
+      if (!selected) return;
+      selected.classList.remove('vrl-spot-pulse');
+      void selected.offsetWidth; // force reflow so the animation restarts cleanly
+      selected.classList.add('vrl-spot-pulse');
+    }, 4000);
   }
 
   // ---------------------------------------------------------------------------
