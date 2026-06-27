@@ -764,6 +764,17 @@
     `;
     mainRow.appendChild(panelButton);
 
+    // View toggle — switches between red-spot anchors and nota-modificatoria paragraphs.
+    const viewToggleButton = document.createElement('button');
+    viewToggleButton.className = 'vrl-toolbar-btn';
+    viewToggleButton.setAttribute('data-tooltip', 'Switch to link view');
+    viewToggleButton.innerHTML = `
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M17 10H3M21 6H3M21 14H3M17 18H3"/>
+    </svg>
+    `;
+    mainRow.appendChild(viewToggleButton);
+
     // Visual separator between the editing buttons and the save button.
     const sep = document.createElement('div');
     sep.className = 'vrl-toolbar-sep';
@@ -872,6 +883,51 @@
     // than a direct function reference keeps the two scripts fully decoupled —
     // either can be reloaded independently without breaking the other.
     const undoStack = [];
+
+    // -------------------------------------------------------------------------
+    // Document view toggle — spots ↔ nota-modificatoria paragraphs
+    // -------------------------------------------------------------------------
+    let viewMode = 'spots'; // 'spots' | 'paragraphs'
+    const noteWrapperStore = new Map(); // data-vrl-id → cloned note-wrapper element
+
+    function toggleDocumentView() {
+      if (viewMode === 'spots') {
+        document.querySelectorAll('note-wrapper[data-vrl-id]').forEach(function (nw) {
+          const id = nw.dataset.vrlId;
+          noteWrapperStore.set(id, nw.cloneNode(true));
+          const div = document.createElement('div');
+          div.className = 'nota-modificatoria';
+          div.setAttribute('data-vrl-id', id);
+          div.textContent = (linkPropsStore[id] && linkPropsStore[id].linkText) || '';
+          nw.parentNode.replaceChild(div, nw);
+        });
+        viewMode = 'paragraphs';
+        viewToggleButton.classList.add('vrl-active');
+        viewToggleButton.setAttribute('data-tooltip', 'Switch to spots view');
+        // Clear spot selection since note-wrappers are no longer in the DOM.
+        currentSpotIndex = -1;
+        isDirty = false;
+        renderSpotsNav();
+        syncLinkPropsSpotId();
+      } else {
+        document.querySelectorAll('div.nota-modificatoria[data-vrl-id]').forEach(function (div) {
+          const id = div.dataset.vrlId;
+          const original = noteWrapperStore.get(id);
+          if (original) {
+            div.parentNode.replaceChild(original, div);
+            noteWrapperStore.delete(id);
+          }
+        });
+        viewMode = 'spots';
+        viewToggleButton.classList.remove('vrl-active');
+        viewToggleButton.setAttribute('data-tooltip', 'Switch to link view');
+        currentSpotIndex = -1;
+        renderSpotsNav();
+        syncLinkPropsSpotId();
+      }
+    }
+
+    viewToggleButton.addEventListener('click', toggleDocumentView);
 
     // When the user clicks a spot directly in the document, vrl-annotation.js dispatches
     // 'vrl-spot-selected' with the spot's vrl-id. Navigate the form to that spot.
@@ -1052,6 +1108,16 @@
       }
       renderSpotsNav();
       syncLinkPropsSpotId();
+
+      // Auto-expand link properties form if it is currently collapsed.
+      const linkPropsForm = document.getElementById('vrlLinkProps');
+      if (linkPropsForm && !linkPropsForm.classList.contains('vrl-expanded')) {
+        linkPropsForm.classList.add('vrl-expanded');
+        const toggle = document.getElementById('vrlLinkPropsToggle');
+        if (toggle) toggle.querySelector('svg path').setAttribute('d', 'm6 15 6-6 6 6');
+        populateLinkTypeSelect();
+        adjustPanelBoundary();
+      }
     }
 
     // Tracks the document selected from the search results list.
