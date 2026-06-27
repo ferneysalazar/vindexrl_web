@@ -19,12 +19,20 @@ CREATE TABLE vindexrl.link_type (
 -- Create the link document table with relationships
 CREATE TABLE vindexrl.link_document (
     id varchar(36) NOT NULL,
-    link_text varchar(2000),
+    link_side char(1),
+    target_document_gender char(1),
+    specific_article boolean NOT NULL DEFAULT false,
+    target_article_text varchar(255),
+    target_article_anchor varchar(100),
+    link_text text,
+    link_type_id varchar(36),
     external_link boolean DEFAULT false,
     external_url varchar(2000),
     internal_document_id varchar(36),
-    link_article_id varchar(10),
-    CONSTRAINT pk_link_document PRIMARY KEY (id)
+    CONSTRAINT pk_link_document PRIMARY KEY (id),
+    CONSTRAINT fk_link_document_link_type FOREIGN KEY (link_type_id) REFERENCES vindexrl.link_type (id),
+    CONSTRAINT chk_link_side CHECK (link_side IN ('A', 'P')),
+    CONSTRAINT chk_target_document_gender CHECK (target_document_gender IN ('M', 'F'))
 );
 
 

@@ -26,6 +26,12 @@
  *    opener in response to 'vrl-search-documents' requests.
  */
 (function () {
+  // Base URL for all API calls. Reads from a <meta name="vrl-api-base"> tag
+  // injected by the backend when serving HTML files, so it works in any
+  // environment without hardcoding. Falls back to the local dev server.
+  const API_BASE = document.querySelector('meta[name="vrl-api-base"]')?.getAttribute('content')
+    || 'http://localhost:3000/api';
+
   // ---------------------------------------------------------------------------
   // Link types cache
   // ---------------------------------------------------------------------------
@@ -34,7 +40,7 @@
   // O(1) lookup. Will be passed as a parameter to toolbar functions that need it.
   const linkTypesMap = new Map();
 
-  fetch('/link-types')
+  fetch(`${API_BASE}/link-types`)
     .then(function (res) { return res.json(); })
     .then(function (data) {
       (Array.isArray(data) ? data : Array.isArray(data.data) ? data.data : []).forEach(function (lt) {
@@ -602,6 +608,27 @@
       transition: opacity 0.15s;
     }
     .vrl-confirm-save:hover { opacity: 0.88; }
+
+    /* --- Link save button (inside link props form) --- */
+    .vrl-link-save-btn {
+      display: block;
+      width: 100%;
+      margin-top: 10px;
+      padding: 5px 10px;
+      background: rgba(0, 100, 255, 0.08);
+      border: 1px solid rgba(0, 100, 255, 0.22);
+      border-radius: 5px;
+      font-size: 12px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      color: #1a56cc;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
+    }
+    .vrl-link-save-btn:hover { background: rgba(0, 100, 255, 0.15); }
+    .vrl-link-save-btn:active { background: rgba(0, 100, 255, 0.22); }
+    .vrl-link-save-btn.vrl-saved { background: rgba(40, 167, 69, 0.1); border-color: rgba(40, 167, 69, 0.3); color: #28a745; }
+    .vrl-link-save-btn.vrl-error { background: rgba(220, 53, 69, 0.08); border-color: rgba(220, 53, 69, 0.3); color: #dc3545; }
+    .vrl-link-save-btn:disabled { opacity: 0.35; cursor: not-allowed; }
     `;
     document.head.appendChild(style);
 
@@ -793,6 +820,7 @@
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
             </button>
           </div>
+          <button class="vrl-link-save-btn" id="vrlLinkSaveBtn" disabled>Save link</button>
         </div>
       </div>
       <div class="vrl-doc-search-label">Document Search</div>
@@ -986,8 +1014,9 @@
       syncLinkPropsSpotId();
     }
 
-    // Tracks the document name selected from the search results list.
+    // Tracks the document selected from the search results list.
     let selectedDocName = null;
+    let selectedDocId = null;
 
     // When true the user has manually edited the Link Text field; auto-compute is suppressed.
     let linkTextUserEdited = false;
@@ -1032,13 +1061,18 @@
       if (previous) sel.value = previous;
     }
 
-    // Updates the spot ID label to reflect the currently navigated spot.
+    // Updates the spot ID label and save button label for the currently navigated spot.
     function syncLinkPropsSpotId() {
       const el = document.getElementById('vrlLinkPropsSpotId');
       if (!el) return;
       const spots = getAllSpots();
       const spot = currentSpotIndex >= 0 ? spots[currentSpotIndex] : null;
       el.textContent = spot ? (spot.dataset.vrlId || '—') : '—';
+      const saveBtn = document.getElementById('vrlLinkSaveBtn');
+      if (saveBtn) {
+        saveBtn.textContent = (spot && spot.dataset.linkDocumentId) ? 'Update link' : 'Save link';
+        saveBtn.disabled = !spot;
+      }
     }
 
     // Prev arrow: step back one spot. Disabled at index 0 so this will not fire
@@ -1144,6 +1178,13 @@
 
     document.getElementById('vrlArticleText').addEventListener('input', computeLinkText);
 
+    document.getElementById('vrlArticleText').addEventListener('blur', function () {
+      const anchor = document.getElementById('vrlArticleAnchor');
+      if (anchor && !anchor.value.trim()) {
+        anchor.value = this.value.trim().toLowerCase().replace(/\s+/g, '-');
+      }
+    });
+
     document.getElementById('vrlLinkTypeSelect').addEventListener('change', computeLinkText);
 
     document.getElementById('vrlLinkProps').addEventListener('change', function (e) {
@@ -1157,7 +1198,94 @@
         .forEach(function (el) { el.classList.remove('vrl-selected'); });
       item.classList.add('vrl-selected');
       selectedDocName = item.querySelector('.vrl-doc-result-name')?.textContent || null;
+      selectedDocId = item.dataset.id || null;
       computeLinkText();
+    });
+
+    // -------------------------------------------------------------------------
+    // Link document save / update
+    // -------------------------------------------------------------------------
+    /**
+     * POSTs a new link_document record or PUTs an update to an existing one.
+     *
+     * Endpoint: /documentLink (POST) or /documentLink/:linkDocumentId (PUT)
+     *
+     * Payload fields map directly to the link_document table columns:
+     *  - link_id              — the spot's data-vrl-id (anchor UUID in the HTML)
+     *  - source_document_id   — the document being edited; read from the
+     *                           <meta name="vrl-document-id"> tag injected by the
+     *                           backend when it serves the HTML file
+     *  - target_document_id   — the document chosen in the search results panel
+     *  - link_type_id         — selected link type
+     *  - link_side            — 'A' (active) or 'P' (passive)
+     *  - target_document_gender — 'M' or 'F'
+     *  - specific_article     — boolean
+     *  - target_article_text / target_article_anchor — only when specific_article
+     *  - link_text            — computed or manually edited text
+     *
+     * On a successful POST the response is expected to contain the new record's id
+     * so it can be stored on the spot element for subsequent PUT requests.
+     */
+    document.getElementById('vrlLinkSaveBtn').addEventListener('click', function () {
+      const spots = getAllSpots();
+      const spot = currentSpotIndex >= 0 ? spots[currentSpotIndex] : null;
+      if (!spot) {
+        console.warn('No spot selected — navigate to a spot before saving.');
+        return;
+      }
+
+      const linkDocumentId = spot.dataset.linkDocumentId || null;
+      const isUpdate = !!linkDocumentId;
+      const btn = document.getElementById('vrlLinkSaveBtn');
+
+      const sideVal = document.querySelector('input[name="vrlLinkSide"]:checked')?.value;
+      const genderVal = document.querySelector('input[name="vrlLinkGender"]:checked')?.value;
+      const articleChecked = document.getElementById('vrlArticleToggle').checked;
+
+      const payload = {
+        link_id: spot.dataset.vrlId,
+        source_document_id: document.querySelector('meta[name="vrl-document-id"]')?.getAttribute('content') || null,
+        target_document_id: selectedDocId,
+        link_type_id: document.getElementById('vrlLinkTypeSelect').value || null,
+        link_side: sideVal === 'active' ? 'A' : 'P',
+        target_document_gender: genderVal === 'masculine' ? 'M' : 'F',
+        specific_article: articleChecked,
+        target_article_text: articleChecked ? (document.getElementById('vrlArticleText').value.trim() || null) : null,
+        target_article_anchor: articleChecked ? (document.getElementById('vrlArticleAnchor').value.trim() || null) : null,
+        link_text: document.getElementById('vrlLinkText').value.trim() || null,
+      };
+
+      const url = isUpdate ? `${API_BASE}/documentLink/${linkDocumentId}` : `${API_BASE}/documentLink`;
+
+      fetch(url, {
+        method: isUpdate ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+        .then(function (res) {
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          return res.json();
+        })
+        .then(function (data) {
+          if (!isUpdate && data.id) {
+            spot.dataset.linkDocumentId = data.id;
+          }
+          btn.textContent = 'Saved ✓';
+          btn.classList.add('vrl-saved');
+          setTimeout(function () {
+            btn.textContent = 'Update link';
+            btn.classList.remove('vrl-saved');
+          }, 2000);
+        })
+        .catch(function (err) {
+          console.error('Failed to save link document:', err);
+          btn.textContent = 'Error — retry';
+          btn.classList.add('vrl-error');
+          setTimeout(function () {
+            btn.textContent = isUpdate ? 'Update link' : 'Save link';
+            btn.classList.remove('vrl-error');
+          }, 2000);
+        });
     });
 
     document.getElementById('vrlSearchDocsBtn').addEventListener('click', function () {
