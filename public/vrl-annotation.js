@@ -100,9 +100,13 @@
           // Second click on the same spot → toggle off.
           target.classList.remove('vrl-spot-selected');
           selectedSpotEl = null;
+          document.dispatchEvent(new CustomEvent('vrl-spot-selected', { detail: { id: null } }));
         } else {
           target.classList.add('vrl-spot-selected');
           selectedSpotEl = target;
+          document.dispatchEvent(new CustomEvent('vrl-spot-selected', {
+            detail: { id: target.parentElement.dataset.vrlId || null },
+          }));
         }
       });
 

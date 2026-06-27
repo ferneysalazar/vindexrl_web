@@ -873,6 +873,15 @@
     // either can be reloaded independently without breaking the other.
     const undoStack = [];
 
+    // When the user clicks a spot directly in the document, vrl-annotation.js dispatches
+    // 'vrl-spot-selected' with the spot's vrl-id. Navigate the form to that spot.
+    document.addEventListener('vrl-spot-selected', function (e) {
+      if (!e.detail.id) return;
+      const spots = getAllSpots();
+      const index = spots.findIndex(function (nw) { return nw.dataset.vrlId === e.detail.id; });
+      if (index !== -1) navigateToSpot(index);
+    });
+
     document.addEventListener('vrl-anchor-added', function (e) {
       undoStack.push(e.detail.id);
       undoButton.disabled = false;
