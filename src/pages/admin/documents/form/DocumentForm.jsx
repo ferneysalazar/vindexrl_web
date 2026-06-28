@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import Icon from '../../../../components/shared/Icon';
 import { I } from '../../../../icons';
 import { Section, Field, Select } from './fields';
@@ -86,7 +87,16 @@ export default function DocumentForm({ item, onSave, onCancel }) {
 
   const clearError = (field) => setFieldErrors(prev => ({ ...prev, [field]: '' }));
 
+  const navigate = useNavigate();
   const htmlWindowRef = useRef(null);
+
+  const handleOpenPdfLinkEditor = () => {
+    if (!item?.id) return;
+    const docName = [item.normTypeName, item.number, item.year ? `/${item.year}` : ''].filter(Boolean).join(' ');
+    navigate(`/admin/documents/${item.id}/pdf-link-editor`, {
+      state: { docId: item.id, docName, docItem: item },
+    });
+  };
 
   const handleOpenHtmlEditor = async () => {
     const srcId = item?.id;
@@ -495,6 +505,16 @@ export default function DocumentForm({ item, onSave, onCancel }) {
         >
           <I.panel size={16} />
         </button>
+        {isEdit && (
+          <button
+            type="button"
+            onClick={handleOpenPdfLinkEditor}
+            title="Open PDF Link Editor"
+            className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 hover:text-[#1e2d4a] hover:bg-slate-100 transition-colors"
+          >
+            <I.linkConfiguration size={16} />
+          </button>
+        )}
       </div>
       {saveError && (
         <div className="flex items-start gap-3 px-4 py-3 rounded-lg bg-[#fde8e8] border border-[#c0392b]/30 text-[#c0392b]">

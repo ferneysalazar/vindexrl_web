@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import Icon from '../../../components/shared/Icon';
 import Pagination from '../../../components/shared/Pagination';
 import { documents, xdocuments } from '../../../services/api';
@@ -7,6 +8,8 @@ import DocumentForm from './form/DocumentForm';
 const PAGE_SIZE = 2;
 
 export default function DocumentsPage() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -15,6 +18,15 @@ export default function DocumentsPage() {
   const [totalPages, setTotalPages] = useState(1);
   const [editingItem, setEditingItem] = useState(undefined);
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Re-open the form when returning from the PDF link editor
+  useEffect(() => {
+    const restore = location.state?.restoreItem;
+    if (restore) {
+      setEditingItem(restore);
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchDocs = (targetPage, withSearch) => {
     const p = targetPage ?? page;

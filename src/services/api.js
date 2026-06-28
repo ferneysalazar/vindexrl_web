@@ -1,4 +1,5 @@
 export const BASE = 'http://localhost:3000/api';
+export const BASE_RASTER = 'http://localhost:3001/api/';
 
 function toQuery(params) {
   const entries = Object.entries(params).filter(([, v]) => v != null && v !== '');
@@ -89,6 +90,34 @@ export const documentSubthemes = {
   create:(docId, body) => request(`/documents/${docId}/subthemes`, { method: 'POST', body: JSON.stringify(body) }),
   update:(docId, subthemeId, body) => request(`/documents/${docId}/subthemes/${subthemeId}`, { method: 'PUT', body: JSON.stringify(body) }),
   delete:(docId, subthemeId) => request(`/documents/${docId}/subthemes/${subthemeId}`, { method: 'DELETE' }),
+};
+
+export const RASTER_RES = /** @type {const} */ (['low', 'medium', 'high']);
+
+// Module-level blob cache — persists for the lifetime of the app session.
+// Keyed as "docId:page:res". Stores the raw Blob so callers can create
+// their own blob URLs (and revoke them) without invalidating the cache.
+const _rasterCache = new Map();
+
+export const rasterPages = {
+  url: (docId, page, res = 'low') =>
+    `${BASE_RASTER}documents/${docId}/pages/${page}?res=${res}`,
+
+  get: (docId, page, res = 'low') => {
+    const key = `${docId}:${page}:${res}`;
+    if (_rasterCache.has(key)) {
+      return Promise.resolve(URL.createObjectURL(_rasterCache.get(key)));
+    }
+    return fetch(`${BASE_RASTER}documents/${docId}/pages/${page}?res=${res}`)
+      .then(r => {
+        if (!r.ok) throw new Error(`${r.status}: ${r.statusText}`);
+        return r.blob();
+      })
+      .then(blob => {
+        _rasterCache.set(key, blob);
+        return URL.createObjectURL(blob);
+      });
+  },
 };
 
 export const htmlFiles = {
