@@ -7,6 +7,20 @@ All notable changes to this project are documented here.
 ## [Unreleased]
 
 ### Added
+- **PDF Link Editor route** (`/admin/documents/:docId/pdf-link-editor`) — full-screen page with its own `EditorLayout` (no sidebar or admin chrome). Opened from the document admin form via the `linkConfiguration` icon button (edit mode only). Closing the editor returns to `/admin/documents` and automatically reopens the form for the same document using `location.state.restoreItem`.
+- **EditorLayout** (`src/layouts/EditorLayout.jsx`) — minimal dark header showing the Logo, document name, and an X close button. Registered as a sibling of `AdminLayout` in `App.jsx` so it gets a completely independent layout tree.
+- **PdfLinkEditorPage** (`src/pages/admin/documents/PdfLinkEditorPage.jsx`) — two-panel viewer:
+  - **Strip** (130 px): vertically scrollable thumbnail sidebar. Each slot is 110 px wide with 10 px padding (A4 aspect ratio). Clicking any thumbnail — even before its image has loaded — smooth-scrolls the viewer to the matching page card.
+  - **Viewer**: full-width scrollable area (`rgb(250, 249, 245)` background) with white A4 page cards. Toolbar with a go-back button (`I.goBack`) and three zoom levels (100 % / 120 % / 150 %).
+- **Page-count driven rendering** — on open the editor calls `rasterDocs.get(docId)` to retrieve `total_pages`, then builds exactly that many placeholder slots in both Strip and Viewer before fetching any images.
+- **Progressive thumbnail loading** — only the first 5 pages are fetched at `low` resolution on open (`INITIAL_LOAD = 5`). Each slot shows an `animate-pulse` skeleton until its image arrives; slots update independently as responses land. Slots for pages beyond the initial 5 remain as skeletons until on-demand loading is implemented.
+- **Raster service layer** (`src/services/api.js`):
+  - `BASE_RASTER` — base URL for the raster service (currently `http://localhost:3001/api/`).
+  - `RASTER_RES` — exported constant array `['low', 'medium', 'high']` for resolution options.
+  - `rasterDocs.get(docId)` — fetches document metadata (status, `total_pages`, timestamps).
+  - `rasterPages.url(docId, page, res)` — returns the endpoint URL string for direct `<img src>` use.
+  - `rasterPages.get(docId, page, res)` — fetches and returns a blob URL; caches the raw `Blob` in a module-level `Map` keyed as `docId:page:res` so repeated requests skip the network. Callers revoke their blob URL on unmount; the cached `Blob` survives and is reused.
+
 - **Link types cache** — `GET /link-types` is fetched on toolbar script load and stored in a `Map` keyed by id for O(1) lookup; available to all toolbar functions as a shared in-scope reference.
 - **Link Properties form** inside the spots navigator: spot UUID label (subtle monospace, synced on every navigation step) and a full-width link type `<select>` populated from the cached `linkTypesMap` on expand; previous selection is preserved across open/close cycles.
 - **Expand/collapse toggle** on the spots navigator — chevron button (arrowDn/arrowUp) placed beside the next-spot arrow; reveals the Link Properties form below the nav row; `adjustPanelBoundary()` is called on toggle to reposition the panel correctly.

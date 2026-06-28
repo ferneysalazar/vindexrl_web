@@ -90,6 +90,10 @@ export default function DocumentForm({ item, onSave, onCancel }) {
   const navigate = useNavigate();
   const htmlWindowRef = useRef(null);
 
+  // Navigate to the full-screen PDF Link Editor for this document.
+  // The full item object is passed in router state so the editor can display
+  // the document name in the header, and so DocumentsPage can restore the
+  // form automatically when the user closes the editor and returns here.
   const handleOpenPdfLinkEditor = () => {
     if (!item?.id) return;
     const docName = [item.normTypeName, item.number, item.year ? `/${item.year}` : ''].filter(Boolean).join(' ');

@@ -92,13 +92,52 @@ export const documentSubthemes = {
   delete:(docId, subthemeId) => request(`/documents/${docId}/subthemes/${subthemeId}`, { method: 'DELETE' }),
 };
 
+// Valid resolution identifiers accepted by the raster service.
+// Use 'low' for thumbnails, 'medium' for previews, 'high' for full reading view.
 export const RASTER_RES = /** @type {const} */ (['low', 'medium', 'high']);
 
+/**
+ * rasterDocs — metadata about a rasterised PDF document.
+ *
+ * GET /documents/:docId
+ * Response: { id, status, total_pages, error_message, created_at, updated_at }
+ *
+ * Call this first before requesting any pages so you know how many pages
+ * exist and can build the correct number of placeholders in the UI.
+ */
+export const rasterDocs = {
+  get: (docId) =>
+    fetch(`${BASE_RASTER}documents/${docId}`)
+      .then(r => {
+        if (!r.ok) throw new Error(`${r.status}: ${r.statusText}`);
+        return r.json();
+      }),
+};
+
 // Module-level blob cache — persists for the lifetime of the app session.
-// Keyed as "docId:page:res". Stores the raw Blob so callers can create
-// their own blob URLs (and revoke them) without invalidating the cache.
+// Keyed as "docId:page:res". Stores the raw Blob (not a blob URL) so each
+// caller can create its own URL.createObjectURL() and revoke it on unmount
+// without invalidating the shared cached entry. This means the network is
+// only hit once per unique (docId, page, resolution) combination.
 const _rasterCache = new Map();
 
+/**
+ * rasterPages — fetch individual rasterised page images.
+ *
+ * url(docId, page, res)
+ *   Returns the endpoint URL as a plain string. Useful when you want to set
+ *   an <img src> directly without a fetch round-trip (e.g. high-res pages
+ *   where the browser handles caching natively via HTTP headers).
+ *
+ * get(docId, page, res)
+ *   Fetches the image, caches the raw Blob in _rasterCache, and returns a
+ *   temporary blob URL. The caller is responsible for calling
+ *   URL.revokeObjectURL() on unmount to free memory. Subsequent calls for
+ *   the same (docId, page, res) skip the network and create a new blob URL
+ *   from the already-cached Blob.
+ *
+ * Default resolution is 'low'. Use RASTER_RES for the full list of options.
+ */
 export const rasterPages = {
   url: (docId, page, res = 'low') =>
     `${BASE_RASTER}documents/${docId}/pages/${page}?res=${res}`,
@@ -106,6 +145,7 @@ export const rasterPages = {
   get: (docId, page, res = 'low') => {
     const key = `${docId}:${page}:${res}`;
     if (_rasterCache.has(key)) {
+      // Cache hit — wrap the stored Blob in a fresh temporary URL
       return Promise.resolve(URL.createObjectURL(_rasterCache.get(key)));
     }
     return fetch(`${BASE_RASTER}documents/${docId}/pages/${page}?res=${res}`)
@@ -114,7 +154,7 @@ export const rasterPages = {
         return r.blob();
       })
       .then(blob => {
-        _rasterCache.set(key, blob);
+        _rasterCache.set(key, blob); // store Blob, not the URL, to decouple cache from URL lifecycle
         return URL.createObjectURL(blob);
       });
   },
