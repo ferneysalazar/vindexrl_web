@@ -37,7 +37,6 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import Icon from '../../../components/shared/Icon';
 import { I } from '../../../icons';
 import { rasterDocs, rasterPages } from '../../../services/api';
 
@@ -469,14 +468,15 @@ export default function PdfLinkEditorPage() {
                       className="w-full block"
                     />
                   ) : (
-                    // Placeholder while high-res is loading
+                    // Spinner while medium-res image is loading
                     <div
-                      className="flex flex-col items-center justify-center gap-3"
+                      className="flex items-center justify-center"
                       style={{ minHeight: pageHeight }}
                     >
-                      <Icon name="pdf" size={56} color="#e2e8f0" />
-                      <span className="text-[14px] text-slate-400 font-medium">Page {page}</span>
-                      <span className="text-[12px] text-slate-300">Document #{docId}</span>
+                      <div className="relative w-14 h-14 flex items-center justify-center">
+                        <div className="absolute inset-0 rounded-full border-4 border-slate-200 border-t-[#1e2d4a] animate-spin" />
+                        <span className="relative text-[12px] font-semibold text-slate-400">{page}</span>
+                      </div>
                     </div>
                   )}
                 </div>
