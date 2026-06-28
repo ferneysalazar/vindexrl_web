@@ -95,18 +95,26 @@ export default function PdfLinkEditorPage() {
   const viewerDebounce   = useRef(null);
   const viewerObserver   = useRef(null);
 
-  // ── Strip ↔ Viewer sync ref ───────────────────────────────────────────────
-  // true  = viewer scroll drives strip scroll (default)
-  // false = user is manually controlling the strip; sync paused
-  const syncEnabled = useRef(true);
+  // ── Strip ↔ Viewer sync refs ──────────────────────────────────────────────
+  // syncEnabled:  true  = viewer scroll drives strip scroll (default)
+  //               false = user is manually controlling the strip; sync paused
+  const syncEnabled  = useRef(true);
+  // suppressSync: true while scrollToPage() animation is running so the viewer
+  // scroll events fired mid-animation cannot accidentally re-enable sync while
+  // the viewer is still passing through intermediate pages on the way to the target.
+  const suppressSync = useRef(false);
 
   const handleGoBack = () => {
     navigate('/admin/documents', state?.docItem ? { state: { restoreItem: state.docItem } } : {});
   };
 
   // Scroll the viewer to the given 0-based page index (called from strip clicks).
+  // Suppresses sync for 800 ms — long enough for the smooth-scroll animation to
+  // complete — so intermediate pages don't drive the strip back toward page 1.
   const scrollToPage = (index) => {
+    suppressSync.current = true;
     pageRefs.current[index]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    setTimeout(() => { suppressSync.current = false; }, 800);
   };
 
   // ── Effect 1: fetch page count + eager initial load ───────────────────────
@@ -323,8 +331,8 @@ export default function PdfLinkEditorPage() {
       });
 
       // Strip sync — scroll the strip to the topmost visible viewer page.
-      // Skipped when the user has taken manual control of the strip.
-      if (syncEnabled.current && visibleViewerPages.size > 0) {
+      // Skipped when sync is disabled (user on strip) or suppressed (programmatic scroll).
+      if (syncEnabled.current && !suppressSync.current && visibleViewerPages.size > 0) {
         const topPage = Math.min(...visibleViewerPages);
         const stripEl = stripSlotRefs.current[topPage - 1];
         if (stripEl) {
@@ -345,10 +353,14 @@ export default function PdfLinkEditorPage() {
 
     // User touches the strip → pause sync so manual strip navigation is uninterrupted
     const onStripPointerDown = () => { syncEnabled.current = false; };
-    // User scrolls or clicks in the viewer → resume sync
+    // User clicks in the viewer → resume sync (always genuine user intent)
     const onViewerResume = () => { syncEnabled.current = true; };
-    // Viewer scroll also resets the lazy-load debounce
-    const onViewerScroll = () => { syncEnabled.current = true; resetViewerDebounce(); };
+    // Viewer scroll → resume sync only if not a programmatic scroll (suppressSync guard)
+    // and always reset the lazy-load debounce regardless.
+    const onViewerScroll = () => {
+      if (!suppressSync.current) syncEnabled.current = true;
+      resetViewerDebounce();
+    };
     window.addEventListener('keydown', resetViewerDebounce);
 
     aside?.addEventListener('pointerdown', onStripPointerDown);
