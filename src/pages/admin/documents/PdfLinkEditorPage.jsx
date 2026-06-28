@@ -49,6 +49,8 @@ const STRIP_INITIAL_LOAD     = 5;     // strip thumbnails fetched eagerly on ope
 const VIEWER_INITIAL_LOAD    = 2;     // viewer pages fetched eagerly on open (expensive)
 const STRIP_RES              = 'low';
 const VIEWER_RES             = 'medium';
+const HIRES_RES              = 'high';
+const READING_DWELL_MS       = 5000;  // ms a page must stay visible before upgrading to high-res
 
 const ZOOM_LEVELS = [
   { label: '100%', scale: 1   },
@@ -87,12 +89,21 @@ export default function PdfLinkEditorPage() {
   const stripDebounce   = useRef(null);
   const stripObserver   = useRef(null);
 
-  // ── Viewer lazy-load refs ─────────────────────────────────────────────────
+  // ── Viewer lazy-load refs (medium res) ───────────────────────────────────
   const viewerLifoStack  = useRef([]);
   const viewerLoadingSet = useRef(new Set());
   const viewerLoadedSet  = useRef(new Set());
   const viewerDebounce   = useRef(null);
   const viewerObserver   = useRef(null);
+
+  // ── High-res upgrade refs ─────────────────────────────────────────────────
+  // Separate from the medium-res cache. A page upgrades to high-res after it
+  // has been continuously visible for READING_DWELL_MS — indicating the user
+  // is actually reading it. The raw Blob is stored in _rasterCache (api.js)
+  // under the key "docId:page:high", independent of the medium-res entry.
+  const hiResLoadedSet  = useRef(new Set()); // pages already upgraded
+  const hiResLoadingSet = useRef(new Set()); // upgrades in flight
+  const readingTimers   = useRef(new Map()); // page → setTimeout id
 
   // ── Strip ↔ Viewer sync refs ──────────────────────────────────────────────
   // syncEnabled:  true  = viewer scroll drives strip scroll (default)
@@ -311,7 +322,7 @@ export default function PdfLinkEditorPage() {
         if (entry.isIntersecting) {
           visibleViewerPages.add(page);
 
-          // Lazy-load queue
+          // Medium-res lazy-load queue
           if (
             !viewerLoadedSet.current.has(page) &&
             !viewerLoadingSet.current.has(page) &&
@@ -320,10 +331,41 @@ export default function PdfLinkEditorPage() {
             viewerLifoStack.current.push(page);
             queued = true;
           }
+
+          // Reading dwell timer — upgrade to high-res after READING_DWELL_MS
+          if (!hiResLoadedSet.current.has(page) && !hiResLoadingSet.current.has(page)) {
+            if (!readingTimers.current.has(page)) {
+              readingTimers.current.set(page, setTimeout(() => {
+                readingTimers.current.delete(page);
+                if (cancelledRef.current) return;
+                if (hiResLoadedSet.current.has(page) || hiResLoadingSet.current.has(page)) return;
+                hiResLoadingSet.current.add(page);
+                rasterPages.get(RASTER_DOC_ID, page, HIRES_RES)
+                  .then(blobUrl => {
+                    if (cancelledRef.current) { URL.revokeObjectURL(blobUrl); return; }
+                    blobUrlsRef.current.push(blobUrl);
+                    hiResLoadingSet.current.delete(page);
+                    hiResLoadedSet.current.add(page);
+                    setViewerImages(prev => {
+                      const next = [...prev];
+                      next[page - 1] = blobUrl;
+                      return next;
+                    });
+                  })
+                  .catch(() => { hiResLoadingSet.current.delete(page); });
+              }, READING_DWELL_MS));
+            }
+          }
         } else {
           visibleViewerPages.delete(page);
 
-          // Remove from queue if the page scrolled away before the timer fired
+          // Cancel the high-res upgrade timer — user scrolled away before dwelling
+          if (readingTimers.current.has(page)) {
+            clearTimeout(readingTimers.current.get(page));
+            readingTimers.current.delete(page);
+          }
+
+          // Remove from medium-res queue if the page scrolled away before the timer fired
           if (!viewerLoadingSet.current.has(page)) {
             const idx = viewerLifoStack.current.indexOf(page);
             if (idx !== -1) viewerLifoStack.current.splice(idx, 1);
@@ -375,6 +417,8 @@ export default function PdfLinkEditorPage() {
       viewerEl?.removeEventListener('click',    onViewerResume);
       window.removeEventListener('keydown', resetViewerDebounce);
       if (viewerDebounce.current) clearTimeout(viewerDebounce.current);
+      readingTimers.current.forEach(id => clearTimeout(id));
+      readingTimers.current.clear();
     };
   }, [pageCount]);
 
