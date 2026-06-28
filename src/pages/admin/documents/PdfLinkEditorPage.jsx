@@ -166,7 +166,9 @@ export default function PdfLinkEditorPage() {
               blobUrlsRef.current.push(blobUrl);
               viewerLoadingSet.current.delete(page);
               viewerLoadedSet.current.add(page);
-              viewerObserver.current?.unobserve(pageRefs.current[page - 1]);
+              // Do NOT unobserve viewer cards — the observer must keep tracking all
+              // pages so visibleViewerPages stays accurate for strip sync.
+              // Re-queuing is already blocked by the viewerLoadedSet guard.
               setViewerImages(prev => {
                 const next = [...prev];
                 next[page - 1] = blobUrl;
@@ -285,7 +287,7 @@ export default function PdfLinkEditorPage() {
             blobUrlsRef.current.push(blobUrl);
             viewerLoadingSet.current.delete(page);
             viewerLoadedSet.current.add(page);
-            viewerObserver.current?.unobserve(pageRefs.current[page - 1]);
+            // Do NOT unobserve — viewer cards must stay observed for strip sync tracking.
             setViewerImages(prev => {
               const next = [...prev];
               next[page - 1] = blobUrl;
