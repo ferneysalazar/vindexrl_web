@@ -13,7 +13,12 @@ All notable changes to this project are documented here.
   - **Strip** (130 px): vertically scrollable thumbnail sidebar. Each slot is 110 px wide with 10 px padding (A4 aspect ratio). Clicking any thumbnail — even before its image has loaded — smooth-scrolls the viewer to the matching page card.
   - **Viewer**: full-width scrollable area (`rgb(250, 249, 245)` background) with white A4 page cards. Toolbar with a go-back button (`I.goBack`) and three zoom levels (100 % / 120 % / 150 %).
 - **Page-count driven rendering** — on open the editor calls `rasterDocs.get(docId)` to retrieve `total_pages`, then builds exactly that many placeholder slots in both Strip and Viewer before fetching any images.
-- **Progressive thumbnail loading** — only the first 5 pages are fetched at `low` resolution on open (`INITIAL_LOAD = 5`). Each slot shows an `animate-pulse` skeleton until its image arrives; slots update independently as responses land. Slots for pages beyond the initial 5 remain as skeletons until on-demand loading is implemented.
+- **Progressive thumbnail loading** — only the first 5 pages (`INITIAL_LOAD = 5`) are fetched eagerly on open. Remaining pages load lazily via an `IntersectionObserver` + LIFO debounce strategy:
+  - The observer (root = aside strip panel) watches which thumbnail slots enter or leave the visible area.
+  - Slots entering view are pushed onto a LIFO stack; slots that scroll away before the timer fires are removed, so only pages the user actually pauses on get fetched.
+  - A 1-second idle debounce (`IDLE_DELAY_MS`) resets on every strip scroll and keydown event — loading never starts while the user is actively navigating.
+  - When the timer fires, the stack is flushed: pages are popped in LIFO order (most recently visible first) and fetched in parallel.
+  - `loadingSet` prevents duplicate in-flight requests; `loadedSet` guards enqueue checks; loaded slots are immediately unobserved.
 - **Raster service layer** (`src/services/api.js`):
   - `BASE_RASTER` — base URL for the raster service (currently `http://localhost:3001/api/`).
   - `RASTER_RES` — exported constant array `['low', 'medium', 'high']` for resolution options.
