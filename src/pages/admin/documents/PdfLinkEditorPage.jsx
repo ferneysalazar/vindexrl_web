@@ -7,20 +7,28 @@
  *   │ thumbnails       │ scrollable full-res page cards   │
  *   └──────────────────┴──────────────────────────────────┘
  *
- * Thumbnail loading strategy:
- *   1. rasterDocs.get() → total_pages  → build that many skeleton slots.
- *   2. Eagerly fetch the first INITIAL_LOAD pages at low resolution.
- *   3. For all remaining pages: an IntersectionObserver (root = aside) watches
- *      which strip slots enter the viewport. Entries are pushed onto a LIFO stack.
- *      When the user stops scrolling / pressing keys for IDLE_DELAY_MS (1 s), the
- *      stack is flushed: pages are popped in reverse-insertion order (most recently
- *      seen first) and fetched. Pages that scroll out of view before the timer
- *      fires are removed from the stack so only "paused-on" pages load.
+ * Thumbnail loading (Strip — low res):
+ *   1. rasterDocs.get() → total_pages  → build skeleton slots.
+ *   2. Eagerly fetch first INITIAL_LOAD pages at 'low' resolution.
+ *   3. Remaining pages: IntersectionObserver (root = aside) watches strip slots.
+ *      Visible slots push onto a LIFO stack; slots that scroll away before the
+ *      idle timer fires are removed. After IDLE_DELAY_MS of inactivity the stack
+ *      is flushed — most-recently-visible page fetched first.
+ *
+ * Page image loading (Viewer — high res):
+ *   Same LIFO + debounce algorithm, but scoped to the viewer scroll container
+ *   and fetching 'high' resolution images.
+ *
+ * Strip ↔ Viewer sync:
+ *   A third IntersectionObserver (root = viewer scroll container) tracks which
+ *   viewer page cards are visible. While sync is enabled, the strip is
+ *   programmatically scrolled to keep the current page's thumbnail in view.
+ *   Sync is DISABLED when the user touches the strip (pointerdown) and
+ *   RE-ENABLED when the user scrolls or clicks inside the viewer panel.
  *
  * Memory management:
- *   All blob URLs are tracked in blobUrlsRef and revoked on unmount. The raw Blob
- *   objects remain in the module-level _rasterCache (api.js) so re-opening the
- *   editor skips the network.
+ *   All blob URLs from both strip and viewer are tracked in blobUrlsRef and
+ *   revoked on unmount. Raw Blobs stay in the module-level _rasterCache (api.js).
  *
  * TODO: replace RASTER_DOC_ID with the actual `docId` URL param once the raster
  *       service has all documents indexed.
@@ -33,11 +41,13 @@ import { I } from '../../../icons';
 import { rasterDocs, rasterPages } from '../../../services/api';
 
 const THUMBNAIL_WIDTH  = 110;
-const THUMBNAIL_HEIGHT = Math.round(THUMBNAIL_WIDTH * (297 / 210)); // A4 ratio ≈ 156px
+const THUMBNAIL_HEIGHT = Math.round(THUMBNAIL_WIDTH * (297 / 210)); // A4 ≈ 156px
 
 const BASE_PAGE_WIDTH = 794;   // A4 at 96 dpi
-const INITIAL_LOAD    = 5;     // pages fetched eagerly on open
+const INITIAL_LOAD    = 5;     // pages fetched eagerly on open (strip + viewer)
 const IDLE_DELAY_MS   = 1000;  // ms of inactivity before LIFO queue is flushed
+const STRIP_RES       = 'low';
+const VIEWER_RES      = 'high';
 
 const ZOOM_LEVELS = [
   { label: '100%', scale: 1   },
@@ -54,39 +64,50 @@ export default function PdfLinkEditorPage() {
   const navigate   = useNavigate();
   const { state }  = useLocation();
 
-  const [zoom,       setZoom]       = useState(1);
-  const [pageCount,  setPageCount]  = useState(null); // null = page count not yet known
-  const [thumbnails, setThumbnails] = useState([]);   // blob URL per slot, null while loading
+  const [zoom,         setZoom]         = useState(1);
+  const [pageCount,    setPageCount]    = useState(null);
+  const [thumbnails,   setThumbnails]   = useState([]); // strip low-res blob URLs
+  const [viewerImages, setViewerImages] = useState([]); // viewer high-res blob URLs
 
-  // Blob URL tracking — all created URLs are revoked on unmount
+  // All created blob URLs — revoked together on unmount
   const blobUrlsRef  = useRef([]);
-  const cancelledRef = useRef(false); // set true on unmount to abort in-flight callbacks
+  const cancelledRef = useRef(false);
 
   // DOM refs
-  const asideRef      = useRef(null); // the aside element (scroll listener + observer root)
-  const stripSlotRefs = useRef([]);   // one ref per strip button (for IntersectionObserver)
-  const pageRefs      = useRef([]);   // one ref per viewer card (for scrollToPage)
+  const asideRef       = useRef(null); // strip aside element
+  const viewerScrollRef= useRef(null); // viewer scroll container div
+  const stripSlotRefs  = useRef([]);   // strip thumbnail buttons
+  const pageRefs       = useRef([]);   // viewer page card wrappers
 
-  // LIFO lazy-load bookkeeping — all refs, no renders needed
-  const lifoStack   = useRef([]);          // pages waiting to load; last item = highest priority
-  const loadingSet  = useRef(new Set());   // pages currently being fetched (prevents duplicates)
-  const loadedSet   = useRef(new Set());   // pages successfully loaded (guards enqueue check)
-  const debounceRef = useRef(null);        // idle-detection setTimeout handle
-  const observerRef = useRef(null);        // IntersectionObserver instance
+  // ── Strip lazy-load refs ──────────────────────────────────────────────────
+  const stripLifoStack  = useRef([]);
+  const stripLoadingSet = useRef(new Set());
+  const stripLoadedSet  = useRef(new Set());
+  const stripDebounce   = useRef(null);
+  const stripObserver   = useRef(null);
+
+  // ── Viewer lazy-load refs ─────────────────────────────────────────────────
+  const viewerLifoStack  = useRef([]);
+  const viewerLoadingSet = useRef(new Set());
+  const viewerLoadedSet  = useRef(new Set());
+  const viewerDebounce   = useRef(null);
+  const viewerObserver   = useRef(null);
+
+  // ── Strip ↔ Viewer sync ref ───────────────────────────────────────────────
+  // true  = viewer scroll drives strip scroll (default)
+  // false = user is manually controlling the strip; sync paused
+  const syncEnabled = useRef(true);
 
   const handleGoBack = () => {
     navigate('/admin/documents', state?.docItem ? { state: { restoreItem: state.docItem } } : {});
   };
 
-  // Smooth-scrolls the viewer to the card at the given 0-based index.
-  // Works even before the thumbnail image has loaded.
+  // Scroll the viewer to the given 0-based page index (called from strip clicks).
   const scrollToPage = (index) => {
     pageRefs.current[index]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
-  // ── Effect 1 ─────────────────────────────────────────────────────────────────
-  // Fetch total_pages from the raster service, then eagerly load the first
-  // INITIAL_LOAD thumbnails without waiting for user interaction.
+  // ── Effect 1: fetch page count + eager initial load ───────────────────────
   useEffect(() => {
     cancelledRef.current = false;
 
@@ -96,26 +117,50 @@ export default function PdfLinkEditorPage() {
 
         setPageCount(total_pages);
         setThumbnails(Array(total_pages).fill(null));
+        setViewerImages(Array(total_pages).fill(null));
 
-        Array.from({ length: Math.min(total_pages, INITIAL_LOAD) }, (_, i) => i + 1)
-          .forEach(page => {
-            loadingSet.current.add(page);
-            rasterPages.get(RASTER_DOC_ID, page, 'low')
-              .then(blobUrl => {
-                if (cancelledRef.current) { URL.revokeObjectURL(blobUrl); return; }
-                blobUrlsRef.current.push(blobUrl);
-                loadingSet.current.delete(page);
-                loadedSet.current.add(page);
-                // Unobserve now that this slot is filled (no-op if observer not yet set up)
-                observerRef.current?.unobserve(stripSlotRefs.current[page - 1]);
-                setThumbnails(prev => {
-                  const next = [...prev];
-                  next[page - 1] = blobUrl;
-                  return next;
-                });
-              })
-              .catch(() => { loadingSet.current.delete(page); });
-          });
+        const eagerPages = Array.from(
+          { length: Math.min(total_pages, INITIAL_LOAD) },
+          (_, i) => i + 1
+        );
+
+        // Eagerly fetch strip thumbnails (low res)
+        eagerPages.forEach(page => {
+          stripLoadingSet.current.add(page);
+          rasterPages.get(RASTER_DOC_ID, page, STRIP_RES)
+            .then(blobUrl => {
+              if (cancelledRef.current) { URL.revokeObjectURL(blobUrl); return; }
+              blobUrlsRef.current.push(blobUrl);
+              stripLoadingSet.current.delete(page);
+              stripLoadedSet.current.add(page);
+              stripObserver.current?.unobserve(stripSlotRefs.current[page - 1]);
+              setThumbnails(prev => {
+                const next = [...prev];
+                next[page - 1] = blobUrl;
+                return next;
+              });
+            })
+            .catch(() => { stripLoadingSet.current.delete(page); });
+        });
+
+        // Eagerly fetch viewer images (high res)
+        eagerPages.forEach(page => {
+          viewerLoadingSet.current.add(page);
+          rasterPages.get(RASTER_DOC_ID, page, VIEWER_RES)
+            .then(blobUrl => {
+              if (cancelledRef.current) { URL.revokeObjectURL(blobUrl); return; }
+              blobUrlsRef.current.push(blobUrl);
+              viewerLoadingSet.current.delete(page);
+              viewerLoadedSet.current.add(page);
+              viewerObserver.current?.unobserve(pageRefs.current[page - 1]);
+              setViewerImages(prev => {
+                const next = [...prev];
+                next[page - 1] = blobUrl;
+                return next;
+              });
+            })
+            .catch(() => { viewerLoadingSet.current.delete(page); });
+        });
       })
       .catch(() => {});
 
@@ -125,101 +170,192 @@ export default function PdfLinkEditorPage() {
     };
   }, []);
 
-  // ── Effect 2 ─────────────────────────────────────────────────────────────────
-  // Set up IntersectionObserver and the debounced LIFO loader once the strip
-  // DOM slots exist (i.e. after pageCount is known and the component re-rendered).
+  // ── Effect 2: strip IntersectionObserver + LIFO debounce ─────────────────
+  // Runs after pageCount is known (DOM strip slots are mounted).
   useEffect(() => {
     if (!pageCount) return;
 
     const aside = asideRef.current;
 
-    // Drain the LIFO stack: pop each page (most recently visible first) and fetch it.
-    // All pops fire their fetches in parallel — LIFO order sets fetch priority,
-    // not serialisation.
-    const flushQueue = () => {
-      while (lifoStack.current.length > 0) {
-        const page = lifoStack.current.pop();
-        if (loadedSet.current.has(page) || loadingSet.current.has(page)) continue;
-
-        loadingSet.current.add(page);
-        rasterPages.get(RASTER_DOC_ID, page, 'low')
+    const flushStripQueue = () => {
+      while (stripLifoStack.current.length > 0) {
+        const page = stripLifoStack.current.pop();
+        if (stripLoadedSet.current.has(page) || stripLoadingSet.current.has(page)) continue;
+        stripLoadingSet.current.add(page);
+        rasterPages.get(RASTER_DOC_ID, page, STRIP_RES)
           .then(blobUrl => {
             if (cancelledRef.current) { URL.revokeObjectURL(blobUrl); return; }
             blobUrlsRef.current.push(blobUrl);
-            loadingSet.current.delete(page);
-            loadedSet.current.add(page);
-            // Slot is filled — stop observing it
-            observerRef.current?.unobserve(stripSlotRefs.current[page - 1]);
+            stripLoadingSet.current.delete(page);
+            stripLoadedSet.current.add(page);
+            stripObserver.current?.unobserve(stripSlotRefs.current[page - 1]);
             setThumbnails(prev => {
               const next = [...prev];
               next[page - 1] = blobUrl;
               return next;
             });
           })
-          .catch(() => { loadingSet.current.delete(page); });
+          .catch(() => { stripLoadingSet.current.delete(page); });
       }
     };
 
-    // Restart the idle timer. Loading only begins after the user has been
-    // still for IDLE_DELAY_MS — any scroll or key event resets the clock.
-    const resetDebounce = () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-      debounceRef.current = setTimeout(flushQueue, IDLE_DELAY_MS);
+    const resetStripDebounce = () => {
+      if (stripDebounce.current) clearTimeout(stripDebounce.current);
+      stripDebounce.current = setTimeout(flushStripQueue, IDLE_DELAY_MS);
     };
 
-    // IntersectionObserver root = aside so only slots visible inside the strip
-    // panel trigger callbacks (not the entire page).
-    // threshold: 0 → any visible pixel counts as intersecting.
-    const observer = new IntersectionObserver((entries) => {
+    const obs = new IntersectionObserver((entries) => {
+      let queued = false;
+      entries.forEach(entry => {
+        const page = parseInt(entry.target.dataset.page, 10);
+        if (entry.isIntersecting) {
+          if (
+            !stripLoadedSet.current.has(page) &&
+            !stripLoadingSet.current.has(page) &&
+            !stripLifoStack.current.includes(page)
+          ) {
+            stripLifoStack.current.push(page);
+            queued = true;
+          }
+        } else {
+          if (!stripLoadingSet.current.has(page)) {
+            const idx = stripLifoStack.current.indexOf(page);
+            if (idx !== -1) stripLifoStack.current.splice(idx, 1);
+          }
+        }
+      });
+      if (queued) resetStripDebounce();
+    }, { root: aside, threshold: 0 });
+
+    stripObserver.current = obs;
+
+    stripSlotRefs.current.forEach((el, i) => {
+      const page = i + 1;
+      if (el && !stripLoadedSet.current.has(page) && !stripLoadingSet.current.has(page)) {
+        obs.observe(el);
+      }
+    });
+
+    const onStripActivity = () => resetStripDebounce();
+    aside?.addEventListener('scroll', onStripActivity);
+    window.addEventListener('keydown', onStripActivity);
+
+    return () => {
+      obs.disconnect();
+      aside?.removeEventListener('scroll', onStripActivity);
+      window.removeEventListener('keydown', onStripActivity);
+      if (stripDebounce.current) clearTimeout(stripDebounce.current);
+    };
+  }, [pageCount]);
+
+  // ── Effect 3: viewer IntersectionObserver + LIFO debounce + strip sync ────
+  // Same lazy-load pattern as Effect 2 but for high-res viewer images.
+  // Additionally tracks which viewer page is topmost-visible and scrolls
+  // the strip to keep it in sync — unless the user has manually touched
+  // the strip, in which case sync is paused until they interact with the viewer.
+  useEffect(() => {
+    if (!pageCount) return;
+
+    const aside    = asideRef.current;
+    const viewerEl = viewerScrollRef.current;
+    const visibleViewerPages = new Set(); // pages currently intersecting in the viewer
+
+    const flushViewerQueue = () => {
+      while (viewerLifoStack.current.length > 0) {
+        const page = viewerLifoStack.current.pop();
+        if (viewerLoadedSet.current.has(page) || viewerLoadingSet.current.has(page)) continue;
+        viewerLoadingSet.current.add(page);
+        rasterPages.get(RASTER_DOC_ID, page, VIEWER_RES)
+          .then(blobUrl => {
+            if (cancelledRef.current) { URL.revokeObjectURL(blobUrl); return; }
+            blobUrlsRef.current.push(blobUrl);
+            viewerLoadingSet.current.delete(page);
+            viewerLoadedSet.current.add(page);
+            viewerObserver.current?.unobserve(pageRefs.current[page - 1]);
+            setViewerImages(prev => {
+              const next = [...prev];
+              next[page - 1] = blobUrl;
+              return next;
+            });
+          })
+          .catch(() => { viewerLoadingSet.current.delete(page); });
+      }
+    };
+
+    const resetViewerDebounce = () => {
+      if (viewerDebounce.current) clearTimeout(viewerDebounce.current);
+      viewerDebounce.current = setTimeout(flushViewerQueue, IDLE_DELAY_MS);
+    };
+
+    const obs = new IntersectionObserver((entries) => {
       let queued = false;
 
       entries.forEach(entry => {
         const page = parseInt(entry.target.dataset.page, 10);
 
         if (entry.isIntersecting) {
-          // Slot scrolled into view — push onto LIFO stack if not already tracked
+          visibleViewerPages.add(page);
+
+          // Lazy-load queue
           if (
-            !loadedSet.current.has(page) &&
-            !loadingSet.current.has(page) &&
-            !lifoStack.current.includes(page)
+            !viewerLoadedSet.current.has(page) &&
+            !viewerLoadingSet.current.has(page) &&
+            !viewerLifoStack.current.includes(page)
           ) {
-            lifoStack.current.push(page);
+            viewerLifoStack.current.push(page);
             queued = true;
           }
         } else {
-          // Slot scrolled out of view — remove from stack if not yet fetching.
-          // This ensures only pages the user actually stopped on get loaded.
-          if (!loadingSet.current.has(page)) {
-            const idx = lifoStack.current.indexOf(page);
-            if (idx !== -1) lifoStack.current.splice(idx, 1);
+          visibleViewerPages.delete(page);
+
+          // Remove from queue if the page scrolled away before the timer fired
+          if (!viewerLoadingSet.current.has(page)) {
+            const idx = viewerLifoStack.current.indexOf(page);
+            if (idx !== -1) viewerLifoStack.current.splice(idx, 1);
           }
         }
       });
 
-      if (queued) resetDebounce();
-    }, { root: aside, threshold: 0 });
-
-    observerRef.current = observer;
-
-    // Observe all strip slots that are not already loading or loaded
-    stripSlotRefs.current.forEach((el, i) => {
-      const page = i + 1;
-      if (el && !loadedSet.current.has(page) && !loadingSet.current.has(page)) {
-        observer.observe(el);
+      // Strip sync — scroll the strip to the topmost visible viewer page.
+      // Skipped when the user has taken manual control of the strip.
+      if (syncEnabled.current && visibleViewerPages.size > 0) {
+        const topPage = Math.min(...visibleViewerPages);
+        const stripEl = stripSlotRefs.current[topPage - 1];
+        if (stripEl) {
+          // block: 'nearest' avoids scrolling the strip when the slot is already visible
+          stripEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
       }
+
+      if (queued) resetViewerDebounce();
+    }, { root: viewerEl, threshold: 0 });
+
+    viewerObserver.current = obs;
+
+    pageRefs.current.forEach((el, i) => {
+      const page = i + 1;
+      if (el) obs.observe(el);
     });
 
-    // Scroll on the strip or any key press resets the idle timer so loading
-    // never begins while the user is actively navigating
-    const onActivity = () => resetDebounce();
-    aside?.addEventListener('scroll', onActivity);
-    window.addEventListener('keydown', onActivity);
+    // User touches the strip → pause sync so manual strip navigation is uninterrupted
+    const onStripPointerDown = () => { syncEnabled.current = false; };
+    // User scrolls or clicks in the viewer → resume sync
+    const onViewerResume = () => { syncEnabled.current = true; };
+    // Viewer scroll also resets the lazy-load debounce
+    const onViewerScroll = () => { syncEnabled.current = true; resetViewerDebounce(); };
+    window.addEventListener('keydown', resetViewerDebounce);
+
+    aside?.addEventListener('pointerdown', onStripPointerDown);
+    viewerEl?.addEventListener('scroll',   onViewerScroll);
+    viewerEl?.addEventListener('click',    onViewerResume);
 
     return () => {
-      observer.disconnect();
-      aside?.removeEventListener('scroll', onActivity);
-      window.removeEventListener('keydown', onActivity);
-      if (debounceRef.current) clearTimeout(debounceRef.current);
+      obs.disconnect();
+      aside?.removeEventListener('pointerdown', onStripPointerDown);
+      viewerEl?.removeEventListener('scroll',   onViewerScroll);
+      viewerEl?.removeEventListener('click',    onViewerResume);
+      window.removeEventListener('keydown', resetViewerDebounce);
+      if (viewerDebounce.current) clearTimeout(viewerDebounce.current);
     };
   }, [pageCount]);
 
@@ -232,7 +368,6 @@ export default function PdfLinkEditorPage() {
       {/* ── Strip ── thumbnail sidebar */}
       <aside ref={asideRef} className="w-[130px] shrink-0 bg-white border-r border-slate-200 overflow-y-auto">
         {pageCount === null ? (
-          // Skeleton while rasterDocs.get() is in flight
           Array.from({ length: 3 }).map((_, i) => (
             <div key={i} className="flex flex-col items-center px-[10px] pt-[10px] pb-[8px]">
               <div className="w-[110px] rounded bg-slate-200 animate-pulse" style={{ height: THUMBNAIL_HEIGHT }} />
@@ -255,7 +390,6 @@ export default function PdfLinkEditorPage() {
                 {thumbnails[i] ? (
                   <img src={thumbnails[i]} alt={`Page ${page}`} className="w-full h-full object-contain" />
                 ) : (
-                  // Pulsing skeleton — slot is clickable even before the image arrives
                   <div className="w-full h-full animate-pulse bg-slate-200" />
                 )}
               </div>
@@ -268,7 +402,7 @@ export default function PdfLinkEditorPage() {
       {/* ── Viewer ── toolbar + scrollable page list */}
       <main className="flex-1 flex flex-col overflow-hidden" style={{ background: 'rgb(250, 249, 245)' }}>
 
-        {/* Toolbar — back button and zoom controls */}
+        {/* Toolbar */}
         <div className="shrink-0 flex items-center gap-1 px-4 py-2 bg-white border-b border-slate-200">
           <button
             onClick={handleGoBack}
@@ -293,23 +427,38 @@ export default function PdfLinkEditorPage() {
           ))}
         </div>
 
-        {/* Scrollable page list — one white A4 card per page.
-            Each card gets a pageRef so Strip thumbnail clicks can scroll to it. */}
-        <div className="flex-1 overflow-y-auto py-8">
+        {/* Scrollable page list — viewer scroll container, also the IntersectionObserver root */}
+        <div ref={viewerScrollRef} className="flex-1 overflow-y-auto py-8">
           <div className="flex flex-col items-center gap-8">
             {pages.map((page, i) => (
               <div
                 key={page}
                 ref={el => { pageRefs.current[i] = el; }}
+                data-page={page}
                 className="flex flex-col items-center gap-2"
               >
                 <div
-                  className="bg-white shadow-2xl flex flex-col items-center justify-center gap-3 transition-all duration-200"
-                  style={{ width: pageWidth, minHeight: pageHeight }}
+                  className="bg-white shadow-2xl overflow-hidden transition-all duration-200"
+                  style={{ width: pageWidth }}
                 >
-                  <Icon name="pdf" size={56} color="#e2e8f0" />
-                  <span className="text-[14px] text-slate-400 font-medium">Page {page}</span>
-                  <span className="text-[12px] text-slate-300">Document #{docId}</span>
+                  {viewerImages[i] ? (
+                    // High-res image loaded — fill the card width, natural height
+                    <img
+                      src={viewerImages[i]}
+                      alt={`Page ${page}`}
+                      className="w-full block"
+                    />
+                  ) : (
+                    // Placeholder while high-res is loading
+                    <div
+                      className="flex flex-col items-center justify-center gap-3"
+                      style={{ minHeight: pageHeight }}
+                    >
+                      <Icon name="pdf" size={56} color="#e2e8f0" />
+                      <span className="text-[14px] text-slate-400 font-medium">Page {page}</span>
+                      <span className="text-[12px] text-slate-300">Document #{docId}</span>
+                    </div>
+                  )}
                 </div>
                 <span className="text-[11px] text-slate-400">{page} / {pageCount}</span>
               </div>
