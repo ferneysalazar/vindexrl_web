@@ -7,17 +7,18 @@
  *   │ thumbnails       │ scrollable full-res page cards   │
  *   └──────────────────┴──────────────────────────────────┘
  *
- * Thumbnail loading (Strip — low res):
+ * Thumbnail loading (Strip — low res, cheap):
  *   1. rasterDocs.get() → total_pages  → build skeleton slots.
- *   2. Eagerly fetch first INITIAL_LOAD pages at 'low' resolution.
+ *   2. Eagerly fetch first STRIP_INITIAL_LOAD (5) pages at 'low' resolution.
  *   3. Remaining pages: IntersectionObserver (root = aside) watches strip slots.
  *      Visible slots push onto a LIFO stack; slots that scroll away before the
  *      idle timer fires are removed. After IDLE_DELAY_MS of inactivity the stack
  *      is flushed — most-recently-visible page fetched first.
  *
- * Page image loading (Viewer — high res):
- *   Same LIFO + debounce algorithm, but scoped to the viewer scroll container
- *   and fetching 'high' resolution images.
+ * Page image loading (Viewer — medium res, expensive):
+ *   Same LIFO + debounce algorithm, but scoped to the viewer scroll container.
+ *   Only VIEWER_INITIAL_LOAD (2) pages are fetched eagerly to keep initial cost low;
+ *   the rest load on demand as the user reads through the document.
  *
  * Strip ↔ Viewer sync:
  *   A third IntersectionObserver (root = viewer scroll container) tracks which
@@ -43,11 +44,12 @@ import { rasterDocs, rasterPages } from '../../../services/api';
 const THUMBNAIL_WIDTH  = 110;
 const THUMBNAIL_HEIGHT = Math.round(THUMBNAIL_WIDTH * (297 / 210)); // A4 ≈ 156px
 
-const BASE_PAGE_WIDTH = 794;   // A4 at 96 dpi
-const INITIAL_LOAD    = 5;     // pages fetched eagerly on open (strip + viewer)
-const IDLE_DELAY_MS   = 1000;  // ms of inactivity before LIFO queue is flushed
-const STRIP_RES       = 'low';
-const VIEWER_RES      = 'high';
+const BASE_PAGE_WIDTH        = 794;   // A4 at 96 dpi
+const IDLE_DELAY_MS          = 1000;  // ms of inactivity before LIFO queue is flushed
+const STRIP_INITIAL_LOAD     = 5;     // strip thumbnails fetched eagerly on open (cheap)
+const VIEWER_INITIAL_LOAD    = 2;     // viewer pages fetched eagerly on open (expensive)
+const STRIP_RES              = 'low';
+const VIEWER_RES             = 'medium';
 
 const ZOOM_LEVELS = [
   { label: '100%', scale: 1   },
@@ -119,13 +121,17 @@ export default function PdfLinkEditorPage() {
         setThumbnails(Array(total_pages).fill(null));
         setViewerImages(Array(total_pages).fill(null));
 
-        const eagerPages = Array.from(
-          { length: Math.min(total_pages, INITIAL_LOAD) },
+        const eagerStripPages = Array.from(
+          { length: Math.min(total_pages, STRIP_INITIAL_LOAD) },
+          (_, i) => i + 1
+        );
+        const eagerViewerPages = Array.from(
+          { length: Math.min(total_pages, VIEWER_INITIAL_LOAD) },
           (_, i) => i + 1
         );
 
-        // Eagerly fetch strip thumbnails (low res)
-        eagerPages.forEach(page => {
+        // Eagerly fetch strip thumbnails (low res, cheap)
+        eagerStripPages.forEach(page => {
           stripLoadingSet.current.add(page);
           rasterPages.get(RASTER_DOC_ID, page, STRIP_RES)
             .then(blobUrl => {
@@ -143,8 +149,8 @@ export default function PdfLinkEditorPage() {
             .catch(() => { stripLoadingSet.current.delete(page); });
         });
 
-        // Eagerly fetch viewer images (high res)
-        eagerPages.forEach(page => {
+        // Eagerly fetch viewer images (medium res, expensive — only first VIEWER_INITIAL_LOAD)
+        eagerViewerPages.forEach(page => {
           viewerLoadingSet.current.add(page);
           rasterPages.get(RASTER_DOC_ID, page, VIEWER_RES)
             .then(blobUrl => {
