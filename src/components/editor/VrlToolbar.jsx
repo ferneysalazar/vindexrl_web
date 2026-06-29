@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback } from 'react';
+import { xdocuments } from '../../services/api';
 import './VrlToolbar.css';
 
 // ── Inline SVG icons ──────────────────────────────────────────────────────────
@@ -306,7 +307,8 @@ function LinkPropsForm({
 
 // ── Document search panel ─────────────────────────────────────────────────────
 
-function DocSearchPanel({ searchType, setSearchType, searchNumber, setSearchNumber, searchYear, setSearchYear, searchEntity, setSearchEntity, onSearch, searchResults, selectedDocId, onSelectResult }) {
+// searchStatus: 'idle' | 'loading' | 'done' | 'empty'
+function DocSearchPanel({ searchType, setSearchType, searchNumber, setSearchNumber, searchYear, setSearchYear, searchEntity, setSearchEntity, onSearch, searchStatus, searchResults, selectedDocId, onSelectResult }) {
   return (
     <>
       <div className="vrl-doc-search-label">Document Search</div>
@@ -317,6 +319,7 @@ function DocSearchPanel({ searchType, setSearchType, searchNumber, setSearchNumb
           placeholder="Type"
           value={searchType}
           onChange={e => setSearchType(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && onSearch()}
         />
         <input
           className="vrl-doc-search-input input-number"
@@ -324,6 +327,7 @@ function DocSearchPanel({ searchType, setSearchType, searchNumber, setSearchNumb
           placeholder="Number"
           value={searchNumber}
           onChange={e => setSearchNumber(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && onSearch()}
         />
         <input
           className="vrl-doc-search-input input-year"
@@ -331,6 +335,7 @@ function DocSearchPanel({ searchType, setSearchType, searchNumber, setSearchNumb
           placeholder="Year"
           value={searchYear}
           onChange={e => setSearchYear(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && onSearch()}
         />
         <input
           className="vrl-doc-search-input input-entity"
@@ -338,13 +343,26 @@ function DocSearchPanel({ searchType, setSearchType, searchNumber, setSearchNumb
           placeholder="Entity"
           value={searchEntity}
           onChange={e => setSearchEntity(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && onSearch()}
         />
-        <button className="vrl-doc-search-btn" onClick={onSearch}>
-          Search Documents
+        <button className="vrl-doc-search-btn" onClick={onSearch} disabled={searchStatus === 'loading'}>
+          {searchStatus === 'loading' ? 'Searching…' : 'Search Documents'}
         </button>
       </div>
 
-      {searchResults.length > 0 && (
+      {searchStatus === 'loading' && (
+        <div className="vrl-doc-results">
+          <div className="vrl-doc-results-msg">Searching…</div>
+        </div>
+      )}
+
+      {searchStatus === 'empty' && (
+        <div className="vrl-doc-results">
+          <div className="vrl-doc-results-msg">No documents found.</div>
+        </div>
+      )}
+
+      {searchStatus === 'done' && searchResults.length > 0 && (
         <div className="vrl-doc-results">
           {searchResults.map((doc, i) => {
             const name = doc.documentName
@@ -413,12 +431,10 @@ export default function VrlToolbar({
   currentSpotIndex = -1,
   undoEnabled = false,
   linkTypes = [],
-  searchResults = [],
   onDeleteSpots,
   onUndo,
   onNavigate,
   onSave,
-  onSearch,
   onSaveLinkProps,
   onCancelLinkProps,
   onResetLinkText,
@@ -442,10 +458,12 @@ export default function VrlToolbar({
   const [isDirty,       setIsDirty]       = useState(false);
 
   // ── Document search state ─────────────────────────────────────────────────
-  const [searchType,   setSearchType]   = useState('');
-  const [searchNumber, setSearchNumber] = useState('');
-  const [searchYear,   setSearchYear]   = useState('');
-  const [searchEntity, setSearchEntity] = useState('');
+  const [searchType,    setSearchType]    = useState('');
+  const [searchNumber,  setSearchNumber]  = useState('');
+  const [searchYear,    setSearchYear]    = useState('');
+  const [searchEntity,  setSearchEntity]  = useState('');
+  const [searchStatus,  setSearchStatus]  = useState('idle'); // 'idle'|'loading'|'done'|'empty'
+  const [searchResults, setSearchResults] = useState([]);
   const [selectedDocId,   setSelectedDocId]   = useState(null);
   const [selectedDocName, setSelectedDocName] = useState(null);
 
@@ -503,9 +521,26 @@ export default function VrlToolbar({
   }, [onSave]);
 
   // ── Search ────────────────────────────────────────────────────────────────
-  const handleSearch = useCallback(() => {
-    onSearch?.({ type: searchType, number: searchNumber, year: searchYear, entity: searchEntity });
-  }, [onSearch, searchType, searchNumber, searchYear, searchEntity]);
+  const handleSearch = useCallback(async () => {
+    setSearchStatus('loading');
+    setSelectedDocId(null);
+    setSelectedDocName(null);
+
+    const searchText = [searchType, searchNumber, searchYear, searchEntity].filter(Boolean).join(' ');
+    const params = { page: 1, size: 20 };
+    if (searchText)    params.searchText     = searchText;
+    if (searchNumber)  params.documentNumber = searchNumber;
+
+    try {
+      const data = await xdocuments.list(params);
+      const docs = data?.data ?? [];
+      setSearchResults(docs);
+      setSearchStatus(docs.length ? 'done' : 'empty');
+    } catch {
+      setSearchResults([]);
+      setSearchStatus('empty');
+    }
+  }, [searchType, searchNumber, searchYear, searchEntity]);
 
   const handleSelectResult = useCallback((doc, name) => {
     setSelectedDocId(doc.id);
@@ -649,6 +684,7 @@ export default function VrlToolbar({
               searchYear={searchYear}     setSearchYear={setSearchYear}
               searchEntity={searchEntity} setSearchEntity={setSearchEntity}
               onSearch={handleSearch}
+              searchStatus={searchStatus}
               searchResults={searchResults}
               selectedDocId={selectedDocId}
               onSelectResult={handleSelectResult}

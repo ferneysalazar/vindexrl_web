@@ -35,10 +35,12 @@
  *       service has all documents indexed.
  */
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { I } from '../../../icons';
 import { rasterDocs, rasterPages } from '../../../services/api';
+import VrlToolbar from '../../../components/editor/VrlToolbar';
+import AnnotationCanvas from '../../../components/editor/AnnotationCanvas';
 
 const THUMBNAIL_WIDTH  = 110;
 const THUMBNAIL_HEIGHT = Math.round(THUMBNAIL_WIDTH * (297 / 210)); // A4 ≈ 156px
@@ -426,6 +428,22 @@ export default function PdfLinkEditorPage() {
   const pageHeight = Math.round(1123 * zoom);
   const pages      = pageCount ? Array.from({ length: pageCount }, (_, i) => i + 1) : [];
 
+  // ── Annotations: { [pageIndex]: [{ id, x, y }] } ─────────────────────────
+  const [annotations, setAnnotations] = useState({});
+
+  const handleShiftClick = useCallback((e, pageIndex) => {
+    if (!e.shiftKey) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    // Centre the initial 10×10 rectangle on the click point.
+    const x = Math.max(0, Math.round(e.clientX - rect.left - 15));
+    const y = Math.max(0, Math.round(e.clientY - rect.top  - 10));
+    const id = `ann-${pageIndex}-${Date.now()}`;
+    setAnnotations(prev => ({
+      ...prev,
+      [pageIndex]: [...(prev[pageIndex] ?? []), { id, x, y }],
+    }));
+  }, []);
+
   return (
     <>
       {/* ── Strip ── thumbnail sidebar */}
@@ -500,29 +518,40 @@ export default function PdfLinkEditorPage() {
                 data-page={page}
                 className="flex flex-col items-center gap-2"
               >
+                {/* Page wrapper — relative so annotations are positioned inside it.
+                    Shift+click anywhere on the page creates a new annotation. */}
                 <div
-                  className="bg-white shadow-2xl overflow-hidden transition-all duration-200"
+                  className="relative"
                   style={{ width: pageWidth }}
+                  onClick={e => handleShiftClick(e, i)}
                 >
-                  {viewerImages[i] ? (
-                    // High-res image loaded — fill the card width, natural height
-                    <img
-                      src={viewerImages[i]}
-                      alt={`Page ${page}`}
-                      className="w-full block"
-                    />
-                  ) : (
-                    // Spinner while medium-res image is loading
-                    <div
-                      className="flex items-center justify-center"
-                      style={{ minHeight: pageHeight }}
-                    >
-                      <div className="relative w-14 h-14 flex items-center justify-center">
-                        <div className="absolute inset-0 rounded-full border-4 border-slate-200 border-t-[#1e2d4a] animate-spin" />
-                        <span className="relative text-[12px] font-semibold text-slate-400">{page}</span>
+                  <div className="bg-white shadow-2xl overflow-hidden transition-all duration-200">
+                    {viewerImages[i] ? (
+                      // High-res image loaded — fill the card width, natural height
+                      <img
+                        src={viewerImages[i]}
+                        alt={`Page ${page}`}
+                        className="w-full block"
+                        draggable={false}
+                      />
+                    ) : (
+                      // Spinner while medium-res image is loading
+                      <div
+                        className="flex items-center justify-center"
+                        style={{ minHeight: pageHeight }}
+                      >
+                        <div className="relative w-14 h-14 flex items-center justify-center">
+                          <div className="absolute inset-0 rounded-full border-4 border-slate-200 border-t-[#1e2d4a] animate-spin" />
+                          <span className="relative text-[12px] font-semibold text-slate-400">{page}</span>
+                        </div>
                       </div>
-                    </div>
-                  )}
+                    )}
+                  </div>
+
+                  {/* Annotation canvases — absolutely positioned over the page */}
+                  {(annotations[i] ?? []).map(ann => (
+                    <AnnotationCanvas key={ann.id} x={ann.x} y={ann.y} />
+                  ))}
                 </div>
                 <span className="text-[11px] text-slate-400">{page} / {pageCount}</span>
               </div>
@@ -531,6 +560,8 @@ export default function PdfLinkEditorPage() {
         </div>
 
       </main>
+
+      <VrlToolbar />
     </>
   );
 }
