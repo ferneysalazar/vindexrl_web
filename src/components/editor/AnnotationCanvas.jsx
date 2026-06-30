@@ -71,6 +71,9 @@ export default function AnnotationCanvas({
   x: initX, y: initY, w: initW, h: initH,
   pageWidth, pageHeight,
   isSelected, onSelect, onChange,
+  viewMode   = false,
+  badgeColor = '#dc2626',
+  badgeLetter = '',
 }) {
   const canvasRef  = useRef(null);
   const dragRef    = useRef(null);
@@ -188,36 +191,67 @@ export default function AnnotationCanvas({
         style={{ display: 'block' }}
       />
 
-      {/* Red move handle — always visible; clicking it selects this annotation */}
-      <Handle
-        cursor="move"
-        style={{ left: 0, top: 0, background: '#dc2626' }}
-        onMouseDown={e => { onSelect?.(); startDrag(e, 'move'); }}
-      />
-
-      {/* Resize handles — only visible when selected */}
-      {isSelected && (
+      {viewMode ? (
+        /* View mode — colored badge at top-left, no interaction */
+        <div
+          style={{
+            position:       'absolute',
+            left:           0,
+            top:            0,
+            width:          16,
+            height:         16,
+            marginLeft:     -8,
+            marginTop:      -8,
+            background:     badgeColor,
+            borderRadius:   2,
+            border:         '1.5px solid #fff',
+            boxShadow:      '0 1px 3px rgba(0,0,0,0.35)',
+            display:        'flex',
+            alignItems:     'center',
+            justifyContent: 'center',
+            color:          '#fff',
+            fontSize:       9,
+            fontWeight:     700,
+            lineHeight:     1,
+            userSelect:     'none',
+          }}
+        >
+          {badgeLetter}
+        </div>
+      ) : (
         <>
+          {/* Red move handle — always visible; clicking it selects this annotation */}
           <Handle
-            cursor="n-resize"
-            style={{ left: '50%', top: 0 }}
-            onMouseDown={e => startDrag(e, 'top')}
+            cursor="move"
+            style={{ left: 0, top: 0, background: '#dc2626' }}
+            onMouseDown={e => { onSelect?.(); startDrag(e, 'move'); }}
           />
-          <Handle
-            cursor="s-resize"
-            style={{ left: '50%', top: '100%' }}
-            onMouseDown={e => startDrag(e, 'bottom')}
-          />
-          <Handle
-            cursor="w-resize"
-            style={{ left: 0, top: '50%' }}
-            onMouseDown={e => startDrag(e, 'left')}
-          />
-          <Handle
-            cursor="e-resize"
-            style={{ left: '100%', top: '50%' }}
-            onMouseDown={e => startDrag(e, 'right')}
-          />
+
+          {/* Resize handles — only visible when selected */}
+          {isSelected && (
+            <>
+              <Handle
+                cursor="n-resize"
+                style={{ left: '50%', top: 0 }}
+                onMouseDown={e => startDrag(e, 'top')}
+              />
+              <Handle
+                cursor="s-resize"
+                style={{ left: '50%', top: '100%' }}
+                onMouseDown={e => startDrag(e, 'bottom')}
+              />
+              <Handle
+                cursor="w-resize"
+                style={{ left: 0, top: '50%' }}
+                onMouseDown={e => startDrag(e, 'left')}
+              />
+              <Handle
+                cursor="e-resize"
+                style={{ left: '100%', top: '50%' }}
+                onMouseDown={e => startDrag(e, 'right')}
+              />
+            </>
+          )}
         </>
       )}
     </div>

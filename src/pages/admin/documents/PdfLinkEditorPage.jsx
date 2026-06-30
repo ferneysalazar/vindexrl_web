@@ -38,9 +38,8 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { I } from '../../../icons';
-import { rasterDocs, rasterPages } from '../../../services/api';
+import { rasterDocs, rasterPages, linkTypes as linkTypesApi, documentLinks as documentLinksApi } from '../../../services/api';
 import VrlToolbar from '../../../components/editor/VrlToolbar';
-import { documentLinks as documentLinksApi } from '../../../services/api';
 import AnnotationCanvas from '../../../components/editor/AnnotationCanvas';
 
 const THUMBNAIL_WIDTH  = 110;
@@ -429,9 +428,32 @@ export default function PdfLinkEditorPage() {
   const pageHeight = Math.round(1123 * zoom);
   const pages      = pageCount ? Array.from({ length: pageCount }, (_, i) => i + 1) : [];
 
+  // ── View / edit mode ─────────────────────────────────────────────────────
+  const [isViewMode, setIsViewMode] = useState(false);
+
+  // ── Link types (for badge colors in view mode) ────────────────────────────
+  const [linkTypesList, setLinkTypesList] = useState([]);
+
+  useEffect(() => {
+    linkTypesApi.list()
+      .then(data => {
+        const list = Array.isArray(data) ? data
+          : Array.isArray(data?.data) ? data.data : [];
+        setLinkTypesList(list);
+      })
+      .catch(() => {});
+  }, []);
+
   // ── Annotations: { [pageIndex]: [{ id, x, y, w, h }] } ──────────────────
   const [annotations,      setAnnotations]      = useState({});
   const [selectedAnnId,    setSelectedAnnId]    = useState(null);
+  // Ghost rect shown while the user is shift-dragging to draw a new annotation.
+  // { pageIndex, x, y, w, h } in pixels relative to the page, or null.
+  const [drawingRect,      setDrawingRect]      = useState(null);
+
+  // spotId → linkTypeId — kept in sync with the VrlToolbar form so viewMode
+  // badges reflect the currently selected link type even before saving.
+  const [spotLinkTypes, setSpotLinkTypes] = useState({});
   // initialLinkData seeds VrlToolbar's per-spot form store and linkDocumentIds
   // on mount so the link panel shows pre-saved values for existing annotations.
   const [initialLinkData,  setInitialLinkData]  = useState([]);
@@ -481,6 +503,13 @@ export default function PdfLinkEditorPage() {
           });
         });
         setInitialLinkData(newLinkData);
+
+        // Seed the spotId → linkTypeId map so viewMode badges are ready immediately.
+        const types = {};
+        newLinkData.forEach(({ spotId, formState: fs }) => {
+          if (fs?.linkTypeId) types[spotId] = fs.linkTypeId;
+        });
+        if (Object.keys(types).length) setSpotLinkTypes(types);
       })
       .catch(err => console.error('Failed to load document links:', err));
   }, [docId]);
@@ -518,23 +547,71 @@ export default function PdfLinkEditorPage() {
     pageRefs.current[spot.pageIndex]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }, [sortedSpots]);
 
-  const handlePageClick = useCallback((e, pageIndex) => {
+  const handleSpotLinkTypeChange = useCallback((spotId, linkTypeId) => {
+    setSpotLinkTypes(prev => ({ ...prev, [spotId]: linkTypeId }));
+  }, []);
+
+  const handlePageMouseDown = useCallback((e, pageIndex) => {
+    if (isViewMode) return;
     if (!e.shiftKey) return;
-    // Shift+click — create a new annotation centred on the click point.
-    const rect = e.currentTarget.getBoundingClientRect();
-    // Convert pixel click position to page-relative percentages so the
-    // annotation position is immune to the current zoom level.
-    const x = Math.max(0, (e.clientX - rect.left - 15) * 100 / pageWidth);
-    const y = Math.max(0, (e.clientY - rect.top  - 10) * 100 / pageHeight);
-    const w = 30 * 100 / pageWidth;
-    const h = 20 * 100 / pageHeight;
-    const id = crypto.randomUUID();
-    setAnnotations(prev => ({
-      ...prev,
-      [pageIndex]: [...(prev[pageIndex] ?? []), { id, x, y, w, h }],
-    }));
-    setSelectedAnnId(id);
-  }, [pageWidth, pageHeight, setAnnotations, setSelectedAnnId]);
+    e.preventDefault();
+
+    const pageRect = e.currentTarget.getBoundingClientRect();
+    const startX   = e.clientX - pageRect.left;
+    const startY   = e.clientY - pageRect.top;
+
+    setDrawingRect({ pageIndex, x: startX, y: startY, w: 0, h: 0 });
+
+    const onMove = (ev) => {
+      const curX = ev.clientX - pageRect.left;
+      const curY = ev.clientY - pageRect.top;
+      setDrawingRect({
+        pageIndex,
+        x: Math.max(0, Math.min(startX, curX)),
+        y: Math.max(0, Math.min(startY, curY)),
+        w: Math.abs(curX - startX),
+        h: Math.abs(curY - startY),
+      });
+    };
+
+    const onUp = (ev) => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup',   onUp);
+      setDrawingRect(null);
+
+      const curX = ev.clientX - pageRect.left;
+      const curY = ev.clientY - pageRect.top;
+      const px   = Math.max(0, Math.min(startX, curX));
+      const py   = Math.max(0, Math.min(startY, curY));
+      const pw   = Math.abs(curX - startX);
+      const ph   = Math.abs(curY - startY);
+
+      const id = crypto.randomUUID();
+      let x, y, w, h;
+      if (pw >= 10 && ph >= 10) {
+        // Use the custom drag rectangle.
+        x = px * 100 / pageWidth;
+        y = py * 100 / pageHeight;
+        w = pw * 100 / pageWidth;
+        h = ph * 100 / pageHeight;
+      } else {
+        // Too small — fall back to default size centred on the click point.
+        x = Math.max(0, (startX - 15) * 100 / pageWidth);
+        y = Math.max(0, (startY - 10) * 100 / pageHeight);
+        w = 30 * 100 / pageWidth;
+        h = 20 * 100 / pageHeight;
+      }
+
+      setAnnotations(prev => ({
+        ...prev,
+        [pageIndex]: [...(prev[pageIndex] ?? []), { id, x, y, w, h }],
+      }));
+      setSelectedAnnId(id);
+    };
+
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup',   onUp);
+  }, [isViewMode, pageWidth, pageHeight, setAnnotations, setSelectedAnnId]);
 
   // Updates the stored percentage values for one annotation after a drag/resize.
   const handleAnnotationChange = useCallback((pageIndex, id, pct) => {
@@ -608,6 +685,20 @@ export default function PdfLinkEditorPage() {
               {label}
             </button>
           ))}
+
+          <div className="w-px h-5 bg-slate-200 mx-1" />
+
+          <button
+            onClick={() => setIsViewMode(v => !v)}
+            title={isViewMode ? 'Switch to edit mode' : 'Switch to view mode'}
+            className={`w-8 h-8 rounded flex items-center justify-center transition-colors
+              ${isViewMode
+                ? 'bg-[#1e2d4a] text-white'
+                : 'text-slate-500 hover:bg-slate-100 hover:text-[#1e2d4a]'
+              }`}
+          >
+            {isViewMode ? <I.linkViewMode size={18} /> : <I.linkEditMode size={18} />}
+          </button>
         </div>
 
         {/* Scrollable page list — viewer scroll container, also the IntersectionObserver root */}
@@ -621,11 +712,11 @@ export default function PdfLinkEditorPage() {
                 className="flex flex-col items-center gap-2"
               >
                 {/* Page wrapper — relative so annotations are positioned inside it.
-                    Shift+click anywhere on the page creates a new annotation. */}
+                    Shift+drag draws a custom rectangle; Shift+click uses a default size. */}
                 <div
                   className="relative"
                   style={{ width: pageWidth }}
-                  onClick={e => handlePageClick(e, i)}
+                  onMouseDown={e => handlePageMouseDown(e, i)}
                 >
                   <div className="bg-white shadow-2xl overflow-hidden transition-all duration-200">
                     {viewerImages[i] ? (
@@ -651,20 +742,45 @@ export default function PdfLinkEditorPage() {
                   </div>
 
                   {/* Annotation canvases — absolutely positioned over the page */}
-                  {(annotations[i] ?? []).map(ann => (
-                    <AnnotationCanvas
-                      key={ann.id}
-                      x={ann.x}
-                      y={ann.y}
-                      w={ann.w}
-                      h={ann.h}
-                      pageWidth={pageWidth}
-                      pageHeight={pageHeight}
-                      isSelected={selectedAnnId === ann.id}
-                      onSelect={() => setSelectedAnnId(ann.id)}
-                      onChange={pct => handleAnnotationChange(i, ann.id, pct)}
+                  {(annotations[i] ?? []).map(ann => {
+                    const linkTypeId = spotLinkTypes[ann.id];
+                    const lt         = linkTypeId ? linkTypesList.find(l => String(l.id) === String(linkTypeId)) : null;
+                    const badgeColor  = lt?.color ? `#${lt.color}` : '#dc2626';
+                    const badgeLetter = lt ? (lt.name || lt.label || '').charAt(0).toUpperCase() : '';
+                    return (
+                      <AnnotationCanvas
+                        key={ann.id}
+                        x={ann.x}
+                        y={ann.y}
+                        w={ann.w}
+                        h={ann.h}
+                        pageWidth={pageWidth}
+                        pageHeight={pageHeight}
+                        isSelected={selectedAnnId === ann.id}
+                        onSelect={() => setSelectedAnnId(ann.id)}
+                        onChange={pct => handleAnnotationChange(i, ann.id, pct)}
+                        viewMode={isViewMode}
+                        badgeColor={badgeColor}
+                        badgeLetter={badgeLetter}
+                      />
+                    );
+                  })}
+
+                  {/* Ghost rectangle shown while the user is shift-dragging */}
+                  {drawingRect?.pageIndex === i && drawingRect.w > 0 && drawingRect.h > 0 && (
+                    <div
+                      style={{
+                        position:      'absolute',
+                        left:          drawingRect.x,
+                        top:           drawingRect.y,
+                        width:         drawingRect.w,
+                        height:        drawingRect.h,
+                        border:        '1px dashed #1a56cc',
+                        background:    'rgba(255, 160, 50, 0.12)',
+                        pointerEvents: 'none',
+                      }}
                     />
-                  ))}
+                  )}
                 </div>
                 <span className="text-[11px] text-slate-400">{page} / {pageCount}</span>
               </div>
@@ -680,6 +796,7 @@ export default function PdfLinkEditorPage() {
         onNavigate={handleNavigate}
         sourceDocumentId={docId ?? null}
         initialLinkData={initialLinkData}
+        onSpotLinkTypeChange={handleSpotLinkTypeChange}
       />
     </>
   );

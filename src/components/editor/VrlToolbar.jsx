@@ -451,6 +451,9 @@ export default function VrlToolbar({
   onNavigate,
   onSave,
   onViewToggle,
+  // Called with (spotId, linkTypeId) whenever the user changes a spot's link type,
+  // so the parent can update viewMode badge colors in real time.
+  onSpotLinkTypeChange,
 }) {
   // ── Link types (fetched once on mount) ───────────────────────────────────
   const [linkTypesList, setLinkTypesList] = useState([]);
@@ -568,7 +571,10 @@ export default function VrlToolbar({
       return next;
     });
     setIsDirty(true);
-  }, [currentSpotId]);
+    if ('linkTypeId' in patch && currentSpotId) {
+      onSpotLinkTypeChange?.(currentSpotId, patch.linkTypeId);
+    }
+  }, [currentSpotId, onSpotLinkTypeChange]);
 
   // Article text blur: auto-fill anchor from slugified text when anchor is empty.
   const handleArticleTextBlur = useCallback(() => {
