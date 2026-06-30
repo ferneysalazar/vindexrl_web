@@ -1,5 +1,5 @@
-import { useState, useRef, useCallback } from 'react';
-import { xdocuments } from '../../services/api';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { xdocuments, linkTypes as linkTypesApi, documentLinks } from '../../services/api';
 import './VrlToolbar.css';
 
 // ── Inline SVG icons ──────────────────────────────────────────────────────────
@@ -88,6 +88,21 @@ function ResetIcon() {
   );
 }
 
+// ── Per-spot form defaults ────────────────────────────────────────────────────
+
+const DEFAULT_FORM = {
+  linkTypeId:         '',
+  linkSide:           'active',
+  linkGender:         'feminine',
+  articleToggle:      false,
+  articleText:        '',
+  articleAnchor:      '',
+  linkText:           '',       // only used when linkTextUserEdited === true
+  linkTextUserEdited: false,
+  selectedDocId:      null,
+  selectedDocName:    null,
+};
+
 // ── Spots navigator ───────────────────────────────────────────────────────────
 
 function SpotsNavigator({ spots, currentSpotIndex, isDirty, onNavigate, onToggleLinkProps, linkPropsExpanded }) {
@@ -120,6 +135,7 @@ function SpotsNavigator({ spots, currentSpotIndex, isDirty, onNavigate, onToggle
                 <button
                   key={item}
                   className={`vrl-spots-nav-item${item === currentSpotIndex ? ' vrl-nav-current' : ''}`}
+                  disabled={isDirty && item !== currentSpotIndex}
                   onClick={() => onNavigate(item)}
                 >
                   {item + 1}
@@ -160,20 +176,24 @@ function LinkPropsForm({
   spotId,
   linkDocumentId,
   linkTypes,
-  linkTypeId, setLinkTypeId,
-  linkSide, setLinkSide,
-  linkGender, setLinkGender,
-  articleToggle, setArticleToggle,
-  articleText, setArticleText,
-  articleAnchor, setArticleAnchor,
-  linkText, setLinkText,
-  selectedDocId,
+  formState,
+  displayLinkText,
+  onChange,
+  onArticleTextBlur,
   isDirty,
-  onMarkDirty,
+  saveLinkStatus,
   onCancel,
   onSave,
-  onResetLinkText,
 }) {
+  const { linkTypeId, linkSide, linkGender, articleToggle, articleText, articleAnchor, selectedDocId } = formState;
+
+  const saveLabel =
+    saveLinkStatus === 'saving' ? 'Saving…'
+    : saveLinkStatus === 'saved'  ? 'Saved ✓'
+    : saveLinkStatus === 'error'  ? 'Error — retry'
+    : linkDocumentId              ? 'Update link'
+    : 'Save link';
+
   return (
     <div className="vrl-link-props">
       <div className="vrl-link-props-title">Link Properties</div>
@@ -182,32 +202,26 @@ function LinkPropsForm({
       <select
         className="vrl-link-type-select"
         value={linkTypeId}
-        onChange={e => { setLinkTypeId(e.target.value); onMarkDirty(); }}
+        onChange={e => onChange({ linkTypeId: e.target.value })}
       >
         <option value="">Select link type…</option>
         {linkTypes.map(lt => (
-          <option key={lt.id} value={lt.id}>{lt.name}</option>
+          <option key={lt.id} value={lt.id}>{lt.name || lt.label || String(lt.id)}</option>
         ))}
       </select>
 
       <span className="vrl-link-text-label">Side of the link</span>
       <div className="vrl-link-side-group">
         <label className="vrl-link-side-label">
-          <input
-            type="radio"
-            name="vrlLinkSide"
-            value="active"
+          <input type="radio" name="vrlLinkSide" value="active"
             checked={linkSide === 'active'}
-            onChange={() => { setLinkSide('active'); onMarkDirty(); }}
+            onChange={() => onChange({ linkSide: 'active' })}
           /> Active side
         </label>
         <label className="vrl-link-side-label">
-          <input
-            type="radio"
-            name="vrlLinkSide"
-            value="passive"
+          <input type="radio" name="vrlLinkSide" value="passive"
             checked={linkSide === 'passive'}
-            onChange={() => { setLinkSide('passive'); onMarkDirty(); }}
+            onChange={() => onChange({ linkSide: 'passive' })}
           /> Passive side
         </label>
       </div>
@@ -215,42 +229,36 @@ function LinkPropsForm({
       <span className="vrl-link-text-label">Document Gender</span>
       <div className="vrl-link-side-group">
         <label className="vrl-link-side-label">
-          <input
-            type="radio"
-            name="vrlLinkGender"
-            value="feminine"
+          <input type="radio" name="vrlLinkGender" value="feminine"
             checked={linkGender === 'feminine'}
-            onChange={() => { setLinkGender('feminine'); onMarkDirty(); }}
+            onChange={() => onChange({ linkGender: 'feminine' })}
           /> Femenine
         </label>
         <label className="vrl-link-side-label">
-          <input
-            type="radio"
-            name="vrlLinkGender"
-            value="masculine"
+          <input type="radio" name="vrlLinkGender" value="masculine"
             checked={linkGender === 'masculine'}
-            onChange={() => { setLinkGender('masculine'); onMarkDirty(); }}
+            onChange={() => onChange({ linkGender: 'masculine' })}
           /> Masculine
         </label>
       </div>
 
       <label className="vrl-link-article-toggle">
-        <input
-          type="checkbox"
+        <input type="checkbox"
           checked={articleToggle}
-          onChange={e => { setArticleToggle(e.target.checked); onMarkDirty(); }}
+          onChange={e => onChange({ articleToggle: e.target.checked })}
         /> Link to an specific article
       </label>
 
       {articleToggle && (
-        <div className="vrl-link-article-fields">
+        <div className="vrl-link-article-fields vrl-visible">
           <span className="vrl-link-text-label">Article text</span>
           <input
             className="vrl-link-article-input"
             type="text"
             placeholder="Article text…"
             value={articleText}
-            onChange={e => { setArticleText(e.target.value); onMarkDirty(); }}
+            onChange={e => onChange({ articleText: e.target.value })}
+            onBlur={onArticleTextBlur}
           />
           <span className="vrl-link-text-label">Article anchor</span>
           <input
@@ -258,7 +266,7 @@ function LinkPropsForm({
             type="text"
             placeholder="Article anchor…"
             value={articleAnchor}
-            onChange={e => { setArticleAnchor(e.target.value); onMarkDirty(); }}
+            onChange={e => onChange({ articleAnchor: e.target.value })}
           />
         </div>
       )}
@@ -268,13 +276,13 @@ function LinkPropsForm({
         <textarea
           className="vrl-link-text-area"
           rows={2}
-          value={linkText}
-          onChange={e => { setLinkText(e.target.value); onMarkDirty(); }}
+          value={displayLinkText}
+          onChange={e => onChange({ linkText: e.target.value, linkTextUserEdited: true })}
         />
         <button
           className="vrl-link-text-reset"
           data-tooltip="Reset to calculated value"
-          onClick={onResetLinkText}
+          onClick={() => onChange({ linkTextUserEdited: false, linkText: '' })}
         >
           <ResetIcon />
         </button>
@@ -294,11 +302,11 @@ function LinkPropsForm({
           Cancel
         </button>
         <button
-          className="vrl-link-save-btn"
-          disabled={!spotId}
+          className={`vrl-link-save-btn${saveLinkStatus === 'saved' ? ' vrl-saved' : saveLinkStatus === 'error' ? ' vrl-error' : ''}`}
+          disabled={!spotId || saveLinkStatus === 'saving'}
           onClick={onSave}
         >
-          {linkDocumentId ? 'Update link' : 'Save link'}
+          {saveLabel}
         </button>
       </div>
     </div>
@@ -307,8 +315,14 @@ function LinkPropsForm({
 
 // ── Document search panel ─────────────────────────────────────────────────────
 
-// searchStatus: 'idle' | 'loading' | 'done' | 'empty'
-function DocSearchPanel({ searchType, setSearchType, searchNumber, setSearchNumber, searchYear, setSearchYear, searchEntity, setSearchEntity, onSearch, searchStatus, searchResults, selectedDocId, onSelectResult }) {
+function DocSearchPanel({
+  searchType, setSearchType,
+  searchNumber, setSearchNumber,
+  searchYear, setSearchYear,
+  searchEntity, setSearchEntity,
+  onSearch, searchStatus, searchResults,
+  selectedDocId, onSelectResult,
+}) {
   return (
     <>
       <div className="vrl-doc-search-label">Document Search</div>
@@ -409,67 +423,230 @@ function SaveConfirmModal({ onCancel, onConfirm }) {
 
 /**
  * Props:
- *   spots            [{ id, linkDocumentId? }]  — spots to navigate (scan DOM in parent)
- *   currentSpotIndex number                      — index into spots[]
- *   undoEnabled      boolean                     — enables the undo button
- *   linkTypes        [{ id, name }]              — options for link type select
- *   searchResults    [{ id, documentName?, normTypeName?, number?, year? }]
+ *   spots             [{ id, ... }]  — annotation spots for the navigator
+ *   currentSpotIndex  number         — index into spots[] (-1 = none selected)
+ *   undoEnabled       boolean
+ *   sourceDocumentId  string|null    — ID of the document being edited (for link save payload)
  *
  * Callback props (implement the logic in the parent):
- *   onDeleteSpots()                    — mousedown: delete spots in current selection
- *   onUndo()                           — undo last anchor
- *   onNavigate(index)                  — navigate to spot at index
- *   onSave()                           — called after save confirmation
- *   onSearch({ type, number, year, entity }) — trigger document search
- *   onSaveLinkProps(formValues)        — save / update a link document record
- *   onCancelLinkProps()                — cancel link props edits
- *   onResetLinkText()                  — reset link text to auto-computed value
- *   onViewToggle(mode)                 — 'spots' | 'paragraphs'
+ *   onDeleteSpots()           — mousedown: delete spots in current selection
+ *   onUndo()                  — undo last anchor
+ *   onNavigate(index)         — navigate to spot at index
+ *   onSave()                  — called after save confirmation
+ *   onViewToggle(mode)        — 'spots' | 'paragraphs'
+ *
+ * Link types are fetched internally from GET /link-types.
+ * Link document save/update is handled internally via POST/PUT /documentLink.
+ * Per-spot form state is maintained internally with save/cancel/baseline semantics.
  */
 export default function VrlToolbar({
   spots = [],
   currentSpotIndex = -1,
   undoEnabled = false,
-  linkTypes = [],
+  sourceDocumentId = null,
   onDeleteSpots,
   onUndo,
   onNavigate,
   onSave,
-  onSaveLinkProps,
-  onCancelLinkProps,
-  onResetLinkText,
   onViewToggle,
 }) {
-  // ── UI panel state ────────────────────────────────────────────────────────
-  const [linkPanelOpen,    setLinkPanelOpen]    = useState(false);
-  const [spotsNavActive,   setSpotsNavActive]   = useState(false);
-  const [linkPropsExpanded, setLinkPropsExpanded] = useState(false);
-  const [viewMode,         setViewMode]         = useState('spots');
-  const [showSaveConfirm,  setShowSaveConfirm]  = useState(false);
+  // ── Link types (fetched once on mount) ───────────────────────────────────
+  const [linkTypesList, setLinkTypesList] = useState([]);
 
-  // ── Link props form state ─────────────────────────────────────────────────
-  const [linkTypeId,    setLinkTypeId]    = useState('');
-  const [linkSide,      setLinkSide]      = useState('active');
-  const [linkGender,    setLinkGender]    = useState('feminine');
-  const [articleToggle, setArticleToggle] = useState(false);
-  const [articleText,   setArticleText]   = useState('');
-  const [articleAnchor, setArticleAnchor] = useState('');
-  const [linkText,      setLinkText]      = useState('');
-  const [isDirty,       setIsDirty]       = useState(false);
+  useEffect(() => {
+    linkTypesApi.list()
+      .then(data => {
+        const list = Array.isArray(data) ? data
+          : Array.isArray(data?.data) ? data.data : [];
+        setLinkTypesList(list);
+      })
+      .catch(() => {});
+  }, []);
 
-  // ── Document search state ─────────────────────────────────────────────────
+  // ── UI panel state ───────────────────────────────────────────────────────
+  const [linkPanelOpen,     setLinkPanelOpen]     = useState(false);
+  const [spotsNavActive,    setSpotsNavActive]     = useState(false);
+  const [linkPropsExpanded, setLinkPropsExpanded]  = useState(false);
+  const [viewMode,          setViewMode]           = useState('spots');
+  const [showSaveConfirm,   setShowSaveConfirm]    = useState(false);
+
+  // ── Per-spot form state ──────────────────────────────────────────────────
+  const [formState,      setFormState]      = useState({ ...DEFAULT_FORM });
+  const [isDirty,        setIsDirty]        = useState(false);
+  const [saveLinkStatus, setSaveLinkStatus] = useState('idle');
+
+  // External stores keyed by spot ID.
+  const linkPropsStoreRef = useRef({}); // { [id]: formState }  — current saved values
+  const baselineStoreRef  = useRef({}); // { [id]: formState }  — snapshot for cancel
+
+  // linkDocumentIds must be state (not a ref) because it is read during render
+  // to decide "Save link" vs "Update link".
+  const [linkDocumentIds, setLinkDocumentIds] = useState({});
+
+  // Ref always holds the latest formState so the navigation effect can read it
+  // without stale-closure issues. Updated synchronously before the nav effect below.
+  const latestFormRef = useRef(formState);
+  useEffect(() => { latestFormRef.current = formState; });
+
+  // ── Spot navigation: sync form state when the selected spot changes ───────
+  const prevSpotIdRef = useRef(null);
+  const currentSpot   = currentSpotIndex >= 0 && currentSpotIndex < spots.length
+    ? spots[currentSpotIndex] : null;
+  const currentSpotId = currentSpot?.id ?? null;
+
+  useEffect(() => {
+    const prevId = prevSpotIdRef.current;
+    if (currentSpotId === prevId) return;
+
+    // Persist form state for the spot we're leaving.
+    if (prevId !== null) {
+      linkPropsStoreRef.current[prevId] = latestFormRef.current;
+    }
+    prevSpotIdRef.current = currentSpotId;
+
+    // Load stored state for the newly selected spot, or reset to defaults.
+    const saved   = currentSpotId ? (linkPropsStoreRef.current[currentSpotId] ?? null) : null;
+    const next    = saved ? { ...DEFAULT_FORM, ...saved } : { ...DEFAULT_FORM };
+    setFormState(next);
+    setIsDirty(false);
+    setSaveLinkStatus('idle');
+
+    // Record this as the baseline so cancel can restore to it.
+    if (currentSpotId) baselineStoreRef.current[currentSpotId] = next;
+  }, [currentSpotId]);
+
+  // ── Computed link text ───────────────────────────────────────────────────
+  // Auto-built from link type, gender, article, and selected document name.
+  // Suppressed when the user has manually edited the textarea.
+  const computedLinkText = useMemo(() => {
+    const lt = linkTypesList.find(l => String(l.id) === String(formState.linkTypeId));
+    const activeVerb    = lt ? (lt.active_verb || lt.name || '') : '';
+    const article       = formState.linkGender === 'masculine' ? 'el' : 'la';
+    const articlePhrase = (formState.articleToggle && formState.articleText.trim())
+      ? ('el ' + formState.articleText.trim() + ' de') : '';
+    return [
+      activeVerb,
+      articlePhrase,
+      formState.selectedDocName ? (article + ' {' + formState.selectedDocName + '}') : '',
+    ].filter(Boolean).join(' ');
+  }, [
+    linkTypesList,
+    formState.linkTypeId,
+    formState.linkGender,
+    formState.articleToggle,
+    formState.articleText,
+    formState.selectedDocName,
+  ]);
+
+  // What's actually displayed in the textarea.
+  const displayLinkText = formState.linkTextUserEdited ? formState.linkText : computedLinkText;
+
+  // ── Form field change handler ────────────────────────────────────────────
+  const handleFormChange = useCallback((patch) => {
+    setFormState(prev => {
+      const next = { ...prev, ...patch };
+      // Immediately persist to the store so navigating away and back restores changes.
+      if (currentSpotId) linkPropsStoreRef.current[currentSpotId] = next;
+      return next;
+    });
+    setIsDirty(true);
+  }, [currentSpotId]);
+
+  // Article text blur: auto-fill anchor from slugified text when anchor is empty.
+  const handleArticleTextBlur = useCallback(() => {
+    setFormState(prev => {
+      if (prev.articleAnchor.trim()) return prev;
+      const anchor = prev.articleText.trim().toLowerCase().replace(/\s+/g, '-');
+      const next = { ...prev, articleAnchor: anchor };
+      if (currentSpotId) linkPropsStoreRef.current[currentSpotId] = next;
+      return next;
+    });
+  }, [currentSpotId]);
+
+  // ── Cancel ───────────────────────────────────────────────────────────────
+  const handleLinkPropsCancel = useCallback(() => {
+    if (!currentSpotId) return;
+    const baseline = baselineStoreRef.current[currentSpotId];
+    const restored = baseline ? { ...DEFAULT_FORM, ...baseline } : { ...DEFAULT_FORM };
+    setFormState(restored);
+    linkPropsStoreRef.current[currentSpotId] = restored;
+    setIsDirty(false);
+    setSaveLinkStatus('idle');
+  }, [currentSpotId]);
+
+  // ── Save / update link document ──────────────────────────────────────────
+  const handleLinkPropsSave = useCallback(async () => {
+    if (!currentSpotId) return;
+    const existingLinkDocId = linkDocumentIds[currentSpotId] ?? null;
+    setSaveLinkStatus('saving');
+
+    const payload = {
+      link_id:                currentSpotId,
+      source_document_id:     sourceDocumentId,
+      target_document_id:     formState.selectedDocId,
+      link_type_id:           formState.linkTypeId    || null,
+      link_side:              formState.linkSide       === 'active'    ? 'A' : 'P',
+      target_document_gender: formState.linkGender     === 'masculine' ? 'M' : 'F',
+      specific_article:       formState.articleToggle,
+      target_article_text:    formState.articleToggle ? (formState.articleText.trim()   || null) : null,
+      target_article_anchor:  formState.articleToggle ? (formState.articleAnchor.trim() || null) : null,
+      link_text:              displayLinkText.trim() || null,
+    };
+
+    try {
+      const data = existingLinkDocId
+        ? await documentLinks.update(existingLinkDocId, payload)
+        : await documentLinks.create(payload);
+
+      if (!existingLinkDocId && data?.id) {
+        setLinkDocumentIds(prev => ({ ...prev, [currentSpotId]: data.id }));
+      }
+      // Advance baseline so a subsequent cancel restores to this saved state.
+      baselineStoreRef.current[currentSpotId] = { ...formState };
+      setIsDirty(false);
+      setSaveLinkStatus('saved');
+      setTimeout(() => setSaveLinkStatus('idle'), 2000);
+    } catch (err) {
+      console.error('Failed to save link document:', err);
+      setSaveLinkStatus('error');
+      setTimeout(() => setSaveLinkStatus('idle'), 2000);
+    }
+  }, [currentSpotId, linkDocumentIds, sourceDocumentId, formState, displayLinkText]);
+
+  // ── Document search ──────────────────────────────────────────────────────
   const [searchType,    setSearchType]    = useState('');
   const [searchNumber,  setSearchNumber]  = useState('');
   const [searchYear,    setSearchYear]    = useState('');
   const [searchEntity,  setSearchEntity]  = useState('');
-  const [searchStatus,  setSearchStatus]  = useState('idle'); // 'idle'|'loading'|'done'|'empty'
+  const [searchStatus,  setSearchStatus]  = useState('idle');
   const [searchResults, setSearchResults] = useState([]);
-  const [selectedDocId,   setSelectedDocId]   = useState(null);
-  const [selectedDocName, setSelectedDocName] = useState(null);
 
-  // ── Drag state ────────────────────────────────────────────────────────────
+  const handleSearch = useCallback(async () => {
+    setSearchStatus('loading');
+    setSearchResults([]);
+    const searchText = [searchType, searchNumber, searchYear, searchEntity].filter(Boolean).join(' ');
+    const params = { page: 1, size: 20 };
+    if (searchText)   params.searchText     = searchText;
+    if (searchNumber) params.documentNumber = searchNumber;
+    try {
+      const data = await xdocuments.list(params);
+      const docs = data?.data ?? [];
+      setSearchResults(docs);
+      setSearchStatus(docs.length ? 'done' : 'empty');
+    } catch {
+      setSearchResults([]);
+      setSearchStatus('empty');
+    }
+  }, [searchType, searchNumber, searchYear, searchEntity]);
+
+  // Selecting a result updates the form (selectedDocId/Name) and marks dirty.
+  const handleSelectResult = useCallback((doc, name) => {
+    handleFormChange({ selectedDocId: doc.id, selectedDocName: name });
+  }, [handleFormChange]);
+
+  // ── Toolbar drag ─────────────────────────────────────────────────────────
   const toolbarRef = useRef(null);
-  const [dragPos, setDragPos] = useState(null); // null = use CSS default (top:20, right:20)
+  const [dragPos,  setDragPos]  = useState(null);
   const drag = useRef({ active: false, startX: 0, startY: 0, initLeft: 0, initTop: 0 });
 
   const handleDragStart = useCallback((e) => {
@@ -487,25 +664,21 @@ export default function VrlToolbar({
     const onUp = () => {
       drag.current.active = false;
       document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
+      document.removeEventListener('mouseup',   onUp);
     };
 
     setDragPos({ left: rect.left, top: rect.top });
     document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
+    document.addEventListener('mouseup',   onUp);
     e.preventDefault();
   }, []);
 
-  // ── Panel toggles ─────────────────────────────────────────────────────────
+  // ── Panel toggles ────────────────────────────────────────────────────────
   const handleSpotsNavToggle = useCallback(() => {
     setSpotsNavActive(v => {
       if (!v) setLinkPanelOpen(true);
       return !v;
     });
-  }, []);
-
-  const handlePanelToggle = useCallback(() => {
-    setLinkPanelOpen(v => !v);
   }, []);
 
   const handleViewToggle = useCallback(() => {
@@ -514,68 +687,17 @@ export default function VrlToolbar({
     onViewToggle?.(next);
   }, [viewMode, onViewToggle]);
 
-  // ── Save ──────────────────────────────────────────────────────────────────
   const handleSaveConfirm = useCallback(() => {
     setShowSaveConfirm(false);
     onSave?.();
   }, [onSave]);
 
-  // ── Search ────────────────────────────────────────────────────────────────
-  const handleSearch = useCallback(async () => {
-    setSearchStatus('loading');
-    setSelectedDocId(null);
-    setSelectedDocName(null);
-
-    const searchText = [searchType, searchNumber, searchYear, searchEntity].filter(Boolean).join(' ');
-    const params = { page: 1, size: 20 };
-    if (searchText)    params.searchText     = searchText;
-    if (searchNumber)  params.documentNumber = searchNumber;
-
-    try {
-      const data = await xdocuments.list(params);
-      const docs = data?.data ?? [];
-      setSearchResults(docs);
-      setSearchStatus(docs.length ? 'done' : 'empty');
-    } catch {
-      setSearchResults([]);
-      setSearchStatus('empty');
-    }
-  }, [searchType, searchNumber, searchYear, searchEntity]);
-
-  const handleSelectResult = useCallback((doc, name) => {
-    setSelectedDocId(doc.id);
-    setSelectedDocName(name);
-    setIsDirty(true);
-  }, []);
-
-  // ── Link props ────────────────────────────────────────────────────────────
-  const markDirty = useCallback(() => setIsDirty(true), []);
-
-  const handleLinkPropsCancel = useCallback(() => {
-    setIsDirty(false);
-    onCancelLinkProps?.();
-  }, [onCancelLinkProps]);
-
-  const handleLinkPropsSave = useCallback(() => {
-    onSaveLinkProps?.({
-      linkTypeId, linkSide, linkGender,
-      articleToggle, articleText, articleAnchor,
-      linkText, selectedDocId, selectedDocName,
-    });
-  }, [onSaveLinkProps, linkTypeId, linkSide, linkGender, articleToggle, articleText, articleAnchor, linkText, selectedDocId, selectedDocName]);
-
-  const handleResetLinkText = useCallback(() => {
-    onResetLinkText?.();
-  }, [onResetLinkText]);
-
-  // ── Derived ───────────────────────────────────────────────────────────────
-  const currentSpot = currentSpotIndex >= 0 && currentSpotIndex < spots.length
-    ? spots[currentSpotIndex]
-    : null;
-
+  // ── Derived ──────────────────────────────────────────────────────────────
   const toolbarStyle = dragPos
     ? { top: dragPos.top, left: dragPos.left, right: 'auto', bottom: 'auto' }
     : undefined;
+
+  const currentLinkDocumentId = currentSpotId ? (linkDocumentIds[currentSpotId] ?? null) : null;
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -617,7 +739,7 @@ export default function VrlToolbar({
           <button
             className={`vrl-toolbar-btn${linkPanelOpen ? ' vrl-active' : ''}`}
             data-tooltip="Toggle link panel"
-            onClick={handlePanelToggle}
+            onClick={() => setLinkPanelOpen(v => !v)}
           >
             <LinkPanelIcon />
           </button>
@@ -660,21 +782,16 @@ export default function VrlToolbar({
             {spotsNavActive && linkPropsExpanded && (
               <LinkPropsForm
                 spotId={currentSpot?.id ?? null}
-                linkDocumentId={currentSpot?.linkDocumentId ?? null}
-                linkTypes={linkTypes}
-                linkTypeId={linkTypeId}       setLinkTypeId={setLinkTypeId}
-                linkSide={linkSide}           setLinkSide={setLinkSide}
-                linkGender={linkGender}       setLinkGender={setLinkGender}
-                articleToggle={articleToggle} setArticleToggle={setArticleToggle}
-                articleText={articleText}     setArticleText={setArticleText}
-                articleAnchor={articleAnchor} setArticleAnchor={setArticleAnchor}
-                linkText={linkText}           setLinkText={setLinkText}
-                selectedDocId={selectedDocId}
+                linkDocumentId={currentLinkDocumentId}
+                linkTypes={linkTypesList}
+                formState={formState}
+                displayLinkText={displayLinkText}
+                onChange={handleFormChange}
+                onArticleTextBlur={handleArticleTextBlur}
                 isDirty={isDirty}
-                onMarkDirty={markDirty}
+                saveLinkStatus={saveLinkStatus}
                 onCancel={handleLinkPropsCancel}
                 onSave={handleLinkPropsSave}
-                onResetLinkText={handleResetLinkText}
               />
             )}
 
@@ -686,7 +803,7 @@ export default function VrlToolbar({
               onSearch={handleSearch}
               searchStatus={searchStatus}
               searchResults={searchResults}
-              selectedDocId={selectedDocId}
+              selectedDocId={formState.selectedDocId}
               onSelectResult={handleSelectResult}
             />
 

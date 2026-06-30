@@ -75,6 +75,15 @@ export const xdocuments = {
   list:  (params = {}) => request('/xdocuments' + toQuery(params)),
 };
 
+export const linkTypes = {
+  list: (params = {}) => request('/link-types' + toQuery(params)),
+};
+
+export const documentLinks = {
+  create: (body)     => request('/documentLink', { method: 'POST', body: JSON.stringify(body) }),
+  update: (id, body) => request(`/documentLink/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+};
+
 export const documentEntities = {
   list:  (docId)           => request(`/documents/${docId}/entities`),
   create:(docId, body)     => request(`/documents/${docId}/entities`, { method: 'POST', body: JSON.stringify(body) }),

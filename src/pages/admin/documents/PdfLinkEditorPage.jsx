@@ -625,6 +625,7 @@ export default function PdfLinkEditorPage() {
         spots={sortedSpots}
         currentSpotIndex={currentSpotIndex}
         onNavigate={handleNavigate}
+        sourceDocumentId={docId ?? null}
       />
     </>
   );
