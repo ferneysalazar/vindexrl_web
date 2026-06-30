@@ -601,8 +601,8 @@ export default function VrlToolbar({
     // Look up the annotation's current position from the sorted spots array.
     const spotData = spots.find(s => s.id === currentSpotId);
 
-    const payload = {
-      id:                     currentSpotId,
+    // Fields shared by both POST and PUT.
+    const sharedPayload = {
       source_document_id:     sourceDocumentId,
       target_document_id:     formState.selectedDocId,
       link_type_id:           formState.linkTypeId    || null,
@@ -612,7 +612,6 @@ export default function VrlToolbar({
       target_article_text:    formState.articleToggle ? (formState.articleText.trim()   || null) : null,
       target_article_anchor:  formState.articleToggle ? (formState.articleAnchor.trim() || null) : null,
       link_text:              displayLinkText.trim() || null,
-      // Annotation position as percentages (0-based page index).
       page:        spotData?.pageIndex ?? null,
       page_xpos:   spotData?.x        ?? null,
       page_ypos:   spotData?.y        ?? null,
@@ -622,8 +621,10 @@ export default function VrlToolbar({
 
     try {
       const data = existingLinkDocId
-        ? await documentLinks.update(existingLinkDocId, payload)
-        : await documentLinks.create(payload);
+        // PUT: id is in the URL, not the body.
+        ? await documentLinks.update(existingLinkDocId, sharedPayload)
+        // POST: id goes in the body so the server stores the annotation UUID.
+        : await documentLinks.create({ id: currentSpotId, ...sharedPayload });
 
       if (!existingLinkDocId && data?.id) {
         setLinkDocumentIds(prev => ({ ...prev, [currentSpotId]: data.id }));
