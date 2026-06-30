@@ -73,8 +73,9 @@ function renderLinkText(text, selectedDocId) {
     if (!match) return part || null; // plain text segment (may be empty)
     const inner = match[1]; // text inside the curly braces
     return selectedDocId
-      ? <a key={i} href={`viewDocument?docId=${selectedDocId}`} target="_blank" rel="noreferrer">{inner}</a>
-      : inner; // no doc linked yet — render plain
+      ? <a key={i} href={`viewDocument?docId=${selectedDocId}`} target="_blank" rel="noreferrer"
+           style={{ color: '#2563eb', textDecoration: 'underline', cursor: 'pointer' }}>{inner}</a>
+      : <span key={i} style={{ color: '#2563eb', fontStyle: 'italic' }}>{inner}</span>;
   });
 }
 

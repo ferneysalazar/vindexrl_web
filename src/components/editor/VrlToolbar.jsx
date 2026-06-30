@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { xdocuments, linkTypes as linkTypesApi, documentLinks } from '../../services/api';
+import { xdocuments, linkTypes as linkTypesApi, documentLinks as documentLinksApi } from '../../services/api';
 import './VrlToolbar.css';
 
 // ── Inline SVG icons ──────────────────────────────────────────────────────────
@@ -184,8 +184,12 @@ function LinkPropsForm({
   saveLinkStatus,
   onCancel,
   onSave,
+  onDrop,
 }) {
   const { linkTypeId, linkSide, linkGender, articleToggle, articleText, articleAnchor, selectedDocId } = formState;
+
+  // Save is only valid when both a link type and non-empty link text are present.
+  const canSave = !!linkTypeId && !!displayLinkText.trim();
 
   const saveLabel =
     saveLinkStatus === 'saving' ? 'Saving…'
@@ -193,6 +197,12 @@ function LinkPropsForm({
     : saveLinkStatus === 'error'  ? 'Error — retry'
     : linkDocumentId              ? 'Update link'
     : 'Save link';
+
+  // In creation mode (no backend record yet) Cancel always removes the annotation.
+  // In update mode Cancel restores the baseline and is only active when dirty.
+  const isCreation     = !linkDocumentId;
+  const handleCancel   = isCreation ? onDrop : onCancel;
+  const cancelDisabled = isCreation ? false : !isDirty;
 
   return (
     <div className="vrl-link-props">
@@ -296,18 +306,28 @@ function LinkPropsForm({
       <div className="vrl-link-form-actions">
         <button
           className="vrl-link-cancel-btn"
-          disabled={!isDirty}
-          onClick={onCancel}
+          disabled={cancelDisabled}
+          onClick={handleCancel}
         >
           Cancel
         </button>
-        <button
-          className={`vrl-link-save-btn${saveLinkStatus === 'saved' ? ' vrl-saved' : saveLinkStatus === 'error' ? ' vrl-error' : ''}`}
-          disabled={!spotId || saveLinkStatus === 'saving'}
-          onClick={onSave}
-        >
-          {saveLabel}
-        </button>
+
+        {!isCreation && !canSave ? (
+          /* Update mode + invalid form — replace save button with red Drop link */
+          <button className="vrl-link-drop-btn" onClick={onDrop}>
+            Drop link
+          </button>
+        ) : (
+          /* Creation mode (always) or update mode with valid form — show Save/Update.
+             Disabled until both link type and link text are filled. */
+          <button
+            className={`vrl-link-save-btn${saveLinkStatus === 'saved' ? ' vrl-saved' : saveLinkStatus === 'error' ? ' vrl-error' : ''}`}
+            disabled={!canSave || !spotId || saveLinkStatus === 'saving'}
+            onClick={onSave}
+          >
+            {saveLabel}
+          </button>
+        )}
       </div>
     </div>
   );
@@ -480,6 +500,14 @@ export default function VrlToolbar({
    * loads from the store) and on any form change that updates the derived text.
    */
   onSpotDataChange,
+  /**
+   * onDropSpot(spotId)
+   *
+   * Called when the user clicks "Drop link" (update mode, form invalid) or
+   * Cancel (creation mode, form invalid).  The parent removes the annotation
+   * rectangle and its associated state for `spotId`.
+   */
+  onDropSpot,
 }) {
   // ── Link types (fetched once on mount) ───────────────────────────────────
   const [linkTypesList, setLinkTypesList] = useState([]);
@@ -636,6 +664,22 @@ export default function VrlToolbar({
     setSaveLinkStatus('idle');
   }, [currentSpotId]);
 
+  // ── Drop spot (delete annotation + backend record) ───────────────────────
+  // Called from "Drop link" (update mode) or Cancel (creation mode).
+  // Removes the per-spot store entries so nothing leaks if a new spot is later
+  // created with the same ID (not expected, but defensive).
+  const handleDropSpot = useCallback(async () => {
+    if (!currentSpotId) return;
+    const linkDocId = linkDocumentIds[currentSpotId];
+    if (linkDocId) {
+      try { await documentLinksApi.delete(linkDocId); } catch (e) { console.error('Drop link failed:', e); }
+      setLinkDocumentIds(prev => { const n = { ...prev }; delete n[currentSpotId]; return n; });
+    }
+    delete linkPropsStoreRef.current[currentSpotId];
+    delete baselineStoreRef.current[currentSpotId];
+    onDropSpot?.(currentSpotId);
+  }, [currentSpotId, linkDocumentIds, onDropSpot]);
+
   // ── Save / update link document ──────────────────────────────────────────
   const handleLinkPropsSave = useCallback(async () => {
     if (!currentSpotId) return;
@@ -666,9 +710,9 @@ export default function VrlToolbar({
     try {
       const data = existingLinkDocId
         // PUT: id is in the URL, not the body.
-        ? await documentLinks.update(existingLinkDocId, sharedPayload)
+        ? await documentLinksApi.update(existingLinkDocId, sharedPayload)
         // POST: id goes in the body so the server stores the annotation UUID.
-        : await documentLinks.create({ id: currentSpotId, ...sharedPayload });
+        : await documentLinksApi.create({ id: currentSpotId, ...sharedPayload });
 
       if (!existingLinkDocId && data?.id) {
         setLinkDocumentIds(prev => ({ ...prev, [currentSpotId]: data.id }));
@@ -864,6 +908,7 @@ export default function VrlToolbar({
                 saveLinkStatus={saveLinkStatus}
                 onCancel={handleLinkPropsCancel}
                 onSave={handleLinkPropsSave}
+                onDrop={handleDropSpot}
               />
             )}
 

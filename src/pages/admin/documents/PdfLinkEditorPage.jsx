@@ -74,8 +74,9 @@ function renderNoteText(text, docId) {
     const m = part.match(/^\{([^}]+)\}$/);
     if (!m) return part || null;
     return docId
-      ? <a key={i} href={`viewDocument?docId=${docId}`} target="_blank" rel="noreferrer">{m[1]}</a>
-      : m[1];
+      ? <a key={i} href={`viewDocument?docId=${docId}`} target="_blank" rel="noreferrer"
+           style={{ color: '#2563eb', textDecoration: 'underline', cursor: 'pointer' }}>{m[1]}</a>
+      : <span key={i} style={{ color: '#2563eb', fontStyle: 'italic' }}>{m[1]}</span>;
   });
 }
 
@@ -665,6 +666,30 @@ export default function PdfLinkEditorPage() {
   }, []);
 
   /**
+   * handleDropSpot — removes an annotation from the viewer entirely.
+   *
+   * Called by VrlToolbar after the backend record (if any) has been deleted:
+   *   • "Drop link" button (update mode, invalid form)
+   *   • Cancel / Drop button (creation mode, invalid form)
+   *
+   * Cleans up all state slices keyed by spotId so nothing leaks.
+   */
+  const handleDropSpot = useCallback((spotId) => {
+    setAnnotations(prev => {
+      const next = { ...prev };
+      for (const pageIdx of Object.keys(next)) {
+        const filtered = next[pageIdx].filter(a => a.id !== spotId);
+        next[pageIdx] = filtered;
+      }
+      return next;
+    });
+    setSpotLinkTypes(prev  => { const n = { ...prev };  delete n[spotId]; return n; });
+    setSpotDisplayData(prev => { const n = { ...prev }; delete n[spotId]; return n; });
+    setInitialLinkData(prev => prev.filter(d => d.spotId !== spotId));
+    if (selectedAnnId === spotId) deselectAll();
+  }, [selectedAnnId, deselectAll]);
+
+  /**
    * handlePageMouseDown — creates a new annotation on Shift+mousedown.
    *
    * ── Guard conditions ─────────────────────────────────────────────────────
@@ -1177,6 +1202,7 @@ export default function PdfLinkEditorPage() {
         initialLinkData={initialLinkData}
         onSpotLinkTypeChange={handleSpotLinkTypeChange}
         onSpotDataChange={handleSpotDataChange}
+        onDropSpot={handleDropSpot}
       />
     </>
   );

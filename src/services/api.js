@@ -87,6 +87,7 @@ export const documentLinks = {
   list:   (srcId)        => request('/documentLinks' + toQuery({ srcId })),
   create: (body)         => request('/documentLink',      { method: 'POST', body: JSON.stringify(body) }),
   update: (id, body)     => request(`/documentLink/${id}`, { method: 'PUT',  body: JSON.stringify(body) }),
+  delete: (id)           => request(`/documentLink/${id}`, { method: 'DELETE' }),
 };
 
 export const documentEntities = {
