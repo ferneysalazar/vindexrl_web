@@ -1,8 +1,8 @@
 /* --- Toolbar shell --- */
 .vrl-floating-toolbar {
   position: fixed;
-  top: 20px;
-  right: 20px;
+  top: 50px;
+  right: 170px;
   z-index: 999999;
   background: rgba(255, 255, 255, 0.40);
   backdrop-filter: blur(12px);
