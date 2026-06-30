@@ -543,23 +543,30 @@ export default function PdfLinkEditorPage() {
     if (!docId) return;
     documentLinksApi.list(docId)
       .then(links => {
-        if (!Array.isArray(links) || !links.length) return;
-        const newLinkData = [];
-        links.forEach(link => {
-          const spotId    = crypto.randomUUID();
-          const pageIndex = link.page;
-          // Same functional-update pattern as handlePageClick so the canvas mounts.
-          setAnnotations(prev => ({
-            ...prev,
-            [pageIndex]: [
-              ...(prev[pageIndex] ?? []),
-              { id: spotId, x: link.page_xpos, y: link.page_ypos, w: link.page_width, h: link.page_height },
-            ],
-          }));
-          newLinkData.push({
-            spotId,
-            linkDocumentId: link.id,
-            formState: {
+        // Build all derived state from the API response in a single pass, then
+        // replace every related slice at once.  Using setAnnotations(prev => ...)
+        // inside a loop would APPEND to existing state, causing duplicates if
+        // the effect re-runs (React StrictMode double-invocation, HMR, etc.).
+        const newAnnotations = {};
+        const newLinkData    = [];
+        const newTypes       = {};
+        const newDisplay     = {};
+
+        if (Array.isArray(links)) {
+          links.forEach(link => {
+            const spotId    = crypto.randomUUID();
+            const pageIndex = link.page;
+
+            if (!newAnnotations[pageIndex]) newAnnotations[pageIndex] = [];
+            newAnnotations[pageIndex].push({
+              id: spotId,
+              x: link.page_xpos,
+              y: link.page_ypos,
+              w: link.page_width,
+              h: link.page_height,
+            });
+
+            const fs = {
               linkTypeId:         link.link_type_id                    ?? '',
               linkSide:           link.link_side === 'A'               ? 'active'    : 'passive',
               linkGender:         link.target_document_gender === 'M'  ? 'masculine' : 'feminine',
@@ -567,40 +574,28 @@ export default function PdfLinkEditorPage() {
               articleText:        link.target_article_text             ?? '',
               articleAnchor:      link.target_article_anchor           ?? '',
               linkText:           link.link_text                       ?? '',
-              // Non-empty saved text is treated as user-edited so it displays as-is.
               linkTextUserEdited: !!link.link_text,
               selectedDocId:      link.target_document_id              ?? null,
-              // selectedDocName is not in this response; computed link text falls
-              // back to the saved link_text when selectedDocName is null.
+              // selectedDocName not in this response; falls back to saved link_text.
               selectedDocName:    null,
-            },
+            };
+
+            newLinkData.push({ spotId, linkDocumentId: link.id, formState: fs });
+
+            if (fs.linkTypeId) newTypes[spotId]   = fs.linkTypeId;
+            newDisplay[spotId] = {
+              displayLinkText: fs.linkText    || '',
+              selectedDocId:   fs.selectedDocId ?? null,
+            };
           });
-        });
+        }
+
+        // Replace — not merge — so stale in-memory state is never carried forward.
+        setAnnotations(newAnnotations);
         setInitialLinkData(newLinkData);
-
-        // Seed spotLinkTypes from the freshly loaded links so that switching to
-        // viewMode immediately shows the correct badge color for every annotation,
-        // without requiring the user to open each spot's form panel first.
-        // Only spots that already have a link_type_id are added; newly-created
-        // spots (not yet saved) will use the default red badge.
-        const types = {};
-        newLinkData.forEach(({ spotId, formState: fs }) => {
-          if (fs?.linkTypeId) types[spotId] = fs.linkTypeId;
-        });
-        if (Object.keys(types).length) setSpotLinkTypes(types);
-
-        // Seed the info-panel display data from the saved records.
-        // `linkTextUserEdited` is true whenever link_text is non-empty (see form
-        // state mapping above), so formState.linkText IS the displayLinkText for
-        // saved spots.  Unsaved (new) spots will get their data via onSpotDataChange.
-        const display = {};
-        newLinkData.forEach(({ spotId, formState: fs }) => {
-          display[spotId] = {
-            displayLinkText: fs.linkText       || '',
-            selectedDocId:   fs.selectedDocId  || null,
-          };
-        });
-        if (Object.keys(display).length) setSpotDisplayData(display);
+        setSpotLinkTypes(newTypes);
+        setSpotDisplayData(newDisplay);
+        setSelectedAnnId(null);
       })
       .catch(err => console.error('Failed to load document links:', err));
   }, [docId]);

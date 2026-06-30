@@ -319,10 +319,10 @@ function LinkPropsForm({
           </button>
         ) : (
           /* Creation mode (always) or update mode with valid form — show Save/Update.
-             Disabled until both link type and link text are filled. */
+             In update mode also requires isDirty; in creation mode isDirty is not relevant. */
           <button
             className={`vrl-link-save-btn${saveLinkStatus === 'saved' ? ' vrl-saved' : saveLinkStatus === 'error' ? ' vrl-error' : ''}`}
-            disabled={!canSave || !spotId || saveLinkStatus === 'saving'}
+            disabled={!canSave || !spotId || saveLinkStatus === 'saving' || (!isCreation && !isDirty)}
             onClick={onSave}
           >
             {saveLabel}
