@@ -35,7 +35,7 @@
  *       service has all documents indexed.
  */
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { I } from '../../../icons';
 import { rasterDocs, rasterPages } from '../../../services/api';
@@ -429,20 +429,55 @@ export default function PdfLinkEditorPage() {
   const pages      = pageCount ? Array.from({ length: pageCount }, (_, i) => i + 1) : [];
 
   // ── Annotations: { [pageIndex]: [{ id, x, y }] } ─────────────────────────
-  const [annotations, setAnnotations] = useState({});
+  const [annotations,   setAnnotations]   = useState({});
+  const [selectedAnnId, setSelectedAnnId] = useState(null);
 
-  const handleShiftClick = useCallback((e, pageIndex) => {
+  // Deselects all annotations. Also wired to Escape key; call programmatically when needed.
+  const deselectAll = useCallback(() => setSelectedAnnId(null), [setSelectedAnnId]);
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') deselectAll(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [deselectAll]);
+
+  // ── Spots navigator ───────────────────────────────────────────────────────
+  // Flatten all annotations across pages into a single array sorted by
+  // page index → y position → x position, matching the reading order.
+  const sortedSpots = useMemo(() =>
+    Object.entries(annotations)
+      .flatMap(([pageIdx, anns]) =>
+        anns.map(ann => ({ ...ann, pageIndex: parseInt(pageIdx, 10) }))
+      )
+      .sort((a, b) => a.pageIndex - b.pageIndex || a.y - b.y || a.x - b.x),
+  [annotations]);
+
+  // Index of the currently selected annotation within sortedSpots (-1 = none).
+  const currentSpotIndex = useMemo(
+    () => sortedSpots.findIndex(s => s.id === selectedAnnId),
+    [sortedSpots, selectedAnnId]
+  );
+
+  const handleNavigate = useCallback((index) => {
+    const spot = sortedSpots[index];
+    if (!spot) return;
+    setSelectedAnnId(spot.id);
+    pageRefs.current[spot.pageIndex]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [sortedSpots]);
+
+  const handlePageClick = useCallback((e, pageIndex) => {
     if (!e.shiftKey) return;
+    // Shift+click — create a new annotation centred on the click point.
     const rect = e.currentTarget.getBoundingClientRect();
-    // Centre the initial 10×10 rectangle on the click point.
-    const x = Math.max(0, Math.round(e.clientX - rect.left - 15));
-    const y = Math.max(0, Math.round(e.clientY - rect.top  - 10));
-    const id = `ann-${pageIndex}-${Date.now()}`;
+    const x  = Math.max(0, Math.round(e.clientX - rect.left - 15));
+    const y  = Math.max(0, Math.round(e.clientY - rect.top  - 10));
+    const id = crypto.randomUUID();
     setAnnotations(prev => ({
       ...prev,
       [pageIndex]: [...(prev[pageIndex] ?? []), { id, x, y }],
     }));
-  }, []);
+    setSelectedAnnId(id);
+  }, [setAnnotations, setSelectedAnnId]);
 
   return (
     <>
@@ -523,7 +558,7 @@ export default function PdfLinkEditorPage() {
                 <div
                   className="relative"
                   style={{ width: pageWidth }}
-                  onClick={e => handleShiftClick(e, i)}
+                  onClick={e => handlePageClick(e, i)}
                 >
                   <div className="bg-white shadow-2xl overflow-hidden transition-all duration-200">
                     {viewerImages[i] ? (
@@ -550,7 +585,13 @@ export default function PdfLinkEditorPage() {
 
                   {/* Annotation canvases — absolutely positioned over the page */}
                   {(annotations[i] ?? []).map(ann => (
-                    <AnnotationCanvas key={ann.id} x={ann.x} y={ann.y} />
+                    <AnnotationCanvas
+                      key={ann.id}
+                      x={ann.x}
+                      y={ann.y}
+                      isSelected={selectedAnnId === ann.id}
+                      onSelect={() => setSelectedAnnId(ann.id)}
+                    />
                   ))}
                 </div>
                 <span className="text-[11px] text-slate-400">{page} / {pageCount}</span>
@@ -561,7 +602,11 @@ export default function PdfLinkEditorPage() {
 
       </main>
 
-      <VrlToolbar />
+      <VrlToolbar
+        spots={sortedSpots}
+        currentSpotIndex={currentSpotIndex}
+        onNavigate={handleNavigate}
+      />
     </>
   );
 }

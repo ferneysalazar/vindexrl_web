@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 
-const HANDLE_SIZE = 8;  // px — square handle dimensions
+const HANDLE_SIZE = 12; // px — square handle dimensions
 const MIN_SIZE    = 10; // px — minimum rectangle width and height
 
 // ── Resize handle ─────────────────────────────────────────────────────────────
@@ -19,14 +19,11 @@ function Handle({ cursor, style, onMouseDown }) {
         boxShadow: '0 1px 3px rgba(0,0,0,0.35)',
         cursor,
         pointerEvents: 'all',
-        // Caller provides the edge-centering offsets relative to the parent div
         ...style,
         marginLeft: -half,
         marginTop: -half,
       }}
       onMouseDown={onMouseDown}
-      // Stop click propagation so a Shift+drag on a handle doesn't spawn a
-      // new annotation when the mouse button is released.
       onClick={e => e.stopPropagation()}
     />
   );
@@ -35,13 +32,12 @@ function Handle({ cursor, style, onMouseDown }) {
 // ── AnnotationCanvas ──────────────────────────────────────────────────────────
 
 /**
- * A draggable-resizable canvas annotation placed absolutely inside a
- * `position: relative` page wrapper.
- *
  * Props:
- *   x, y   — initial top-left position (px, relative to page wrapper)
+ *   x, y        — initial top-left position (px, relative to page wrapper)
+ *   isSelected  — whether this annotation is currently selected
+ *   onSelect    — called when the user clicks the red handle to select this annotation
  */
-export default function AnnotationCanvas({ x: initX, y: initY }) {
+export default function AnnotationCanvas({ x: initX, y: initY, isSelected, onSelect }) {
   const canvasRef = useRef(null);
   const dragRef   = useRef(null);
 
@@ -56,15 +52,12 @@ export default function AnnotationCanvas({ x: initX, y: initY }) {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const { w, h } = posRef.current;
-    // Resizing the canvas element clears it automatically.
     canvas.width  = w;
     canvas.height = h;
     const ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, w, h);
-    // Soft orange fill
     ctx.fillStyle = 'rgba(255, 160, 50, 0.12)';
     ctx.fillRect(0, 0, w, h);
-    // 1 px dashed border, inset by 0.5 px so it isn't clipped at edges
     ctx.setLineDash([4, 3]);
     ctx.strokeStyle = '#1a56cc';
     ctx.lineWidth   = 1;
@@ -96,7 +89,6 @@ export default function AnnotationCanvas({ x: initX, y: initY }) {
         nx = d.startX + dx;
         ny = d.startY + dy;
       } else if (d.direction === 'top') {
-        // Moving top edge upward increases height; clamp so height ≥ MIN_SIZE.
         const clamp = Math.min(dy, nh - MIN_SIZE);
         ny = d.startY + clamp;
         nh = d.startH - clamp;
@@ -134,7 +126,7 @@ export default function AnnotationCanvas({ x: initX, y: initY }) {
         top:           y,
         width:         w,
         height:        h,
-        pointerEvents: 'none', // transparent to clicks so page shift-click still works
+        pointerEvents: 'none',
       }}
     >
       <canvas
@@ -144,40 +136,38 @@ export default function AnnotationCanvas({ x: initX, y: initY }) {
         style={{ display: 'block' }}
       />
 
-      {/* Move — red handle at top-left corner; drags the whole rectangle */}
+      {/* Red move handle — always visible; clicking it selects this annotation */}
       <Handle
         cursor="move"
         style={{ left: 0, top: 0, background: '#dc2626' }}
-        onMouseDown={e => startDrag(e, 'move')}
+        onMouseDown={e => { onSelect?.(); startDrag(e, 'move'); }}
       />
 
-      {/* Top — drag upward to increase height */}
-      <Handle
-        cursor="n-resize"
-        style={{ left: '50%', top: 0 }}
-        onMouseDown={e => startDrag(e, 'top')}
-      />
-
-      {/* Bottom — drag downward to increase height */}
-      <Handle
-        cursor="s-resize"
-        style={{ left: '50%', top: '100%' }}
-        onMouseDown={e => startDrag(e, 'bottom')}
-      />
-
-      {/* Left — drag left to increase width */}
-      <Handle
-        cursor="w-resize"
-        style={{ left: 0, top: '50%' }}
-        onMouseDown={e => startDrag(e, 'left')}
-      />
-
-      {/* Right — drag right to increase width */}
-      <Handle
-        cursor="e-resize"
-        style={{ left: '100%', top: '50%' }}
-        onMouseDown={e => startDrag(e, 'right')}
-      />
+      {/* Resize handles — only visible when this annotation is selected */}
+      {isSelected && (
+        <>
+          <Handle
+            cursor="n-resize"
+            style={{ left: '50%', top: 0 }}
+            onMouseDown={e => startDrag(e, 'top')}
+          />
+          <Handle
+            cursor="s-resize"
+            style={{ left: '50%', top: '100%' }}
+            onMouseDown={e => startDrag(e, 'bottom')}
+          />
+          <Handle
+            cursor="w-resize"
+            style={{ left: 0, top: '50%' }}
+            onMouseDown={e => startDrag(e, 'left')}
+          />
+          <Handle
+            cursor="e-resize"
+            style={{ left: '100%', top: '50%' }}
+            onMouseDown={e => startDrag(e, 'right')}
+          />
+        </>
+      )}
     </div>
   );
 }
