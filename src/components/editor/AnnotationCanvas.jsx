@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 
 const HANDLE_SIZE = 12; // px — square handle dimensions
-const MIN_SIZE    = 10; // px — minimum rectangle width and height
+const MIN_SIZE    = 10; // px — minimum rectangle width / height
 
 // ── Resize handle ─────────────────────────────────────────────────────────────
 
@@ -29,21 +29,61 @@ function Handle({ cursor, style, onMouseDown }) {
   );
 }
 
+// ── Coordinate helpers ────────────────────────────────────────────────────────
+
+function pctToPx({ x, y, w, h }, pageWidth, pageHeight) {
+  return {
+    x: x * pageWidth  / 100,
+    y: y * pageHeight / 100,
+    w: w * pageWidth  / 100,
+    h: h * pageHeight / 100,
+  };
+}
+
+function pxToPct({ x, y, w, h }, pageWidth, pageHeight) {
+  return {
+    x: x * 100 / pageWidth,
+    y: y * 100 / pageHeight,
+    w: w * 100 / pageWidth,
+    h: h * 100 / pageHeight,
+  };
+}
+
 // ── AnnotationCanvas ──────────────────────────────────────────────────────────
 
 /**
  * Props:
- *   x, y        — initial top-left position (px, relative to page wrapper)
- *   isSelected  — whether this annotation is currently selected
- *   onSelect    — called when the user clicks the red handle to select this annotation
+ *   x, y, w, h   — position / size as percentages of pageWidth / pageHeight
+ *   pageWidth    — current rendered page width  in px (changes with zoom)
+ *   pageHeight   — current rendered page height in px (changes with zoom)
+ *   isSelected   — whether resize handles are visible
+ *   onSelect     — called when the red handle is pressed
+ *   onChange     — called on drag/resize end with { x, y, w, h } in percentages
+ *
+ * Position strategy:
+ *   When at rest `pos` is derived directly from percentage props × page
+ *   dimensions, so it automatically corrects when zoom changes — no sync
+ *   effect required. During a drag, `dragPos` (pixels) overrides the
+ *   derived value to give smooth movement; it is cleared on mouseup after
+ *   `onChange` reports the final percentages back to the parent.
  */
-export default function AnnotationCanvas({ x: initX, y: initY, isSelected, onSelect }) {
-  const canvasRef = useRef(null);
-  const dragRef   = useRef(null);
+export default function AnnotationCanvas({
+  x: initX, y: initY, w: initW, h: initH,
+  pageWidth, pageHeight,
+  isSelected, onSelect, onChange,
+}) {
+  const canvasRef  = useRef(null);
+  const dragRef    = useRef(null);
+  const lastPosRef = useRef(null); // tracks final pixel pos during drag
 
-  const [pos, setPos] = useState({ x: initX, y: initY, w: 30, h: 20 });
+  // `dragPos` is only non-null while a drag is in progress.
+  const [dragPos, setDragPos] = useState(null);
 
-  // Keep a ref in sync so drag closures always read the latest position.
+  // When at rest use prop-derived pixels (zoom-immune); when dragging use the
+  // live pixel override so the rectangle follows the pointer smoothly.
+  const pos = dragPos ?? pctToPx({ x: initX, y: initY, w: initW, h: initH }, pageWidth, pageHeight);
+
+  // Keep a ref in sync so drag closures always read the latest pixel pos.
   const posRef = useRef(pos);
   useEffect(() => { posRef.current = pos; });
 
@@ -51,7 +91,7 @@ export default function AnnotationCanvas({ x: initX, y: initY, isSelected, onSel
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const { w, h } = posRef.current;
+    const { w, h } = pos;
     canvas.width  = w;
     canvas.height = h;
     const ctx = canvas.getContext('2d');
@@ -62,21 +102,25 @@ export default function AnnotationCanvas({ x: initX, y: initY, isSelected, onSel
     ctx.strokeStyle = '#1a56cc';
     ctx.lineWidth   = 1;
     ctx.strokeRect(0.5, 0.5, w - 1, h - 1);
-  }, [pos.w, pos.h]);
+  }, [pos.w, pos.h]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Handle drag ───────────────────────────────────────────────────────────
   const startDrag = useCallback((e, direction) => {
     e.preventDefault();
     e.stopPropagation();
 
-    const { x, y, w, h } = posRef.current;
+    // Capture pixel state at drag-start from the derived pos (not posRef, which
+    // may lag one render behind when this is called immediately after mount).
+    const initPx = pctToPx({ x: initX, y: initY, w: initW, h: initH }, pageWidth, pageHeight);
     dragRef.current = {
       direction,
       startClientX: e.clientX,
       startClientY: e.clientY,
-      startX: x, startY: y,
-      startW: w, startH: h,
+      startX: initPx.x, startY: initPx.y,
+      startW: initPx.w, startH: initPx.h,
     };
+    lastPosRef.current = null;
+    setDragPos(initPx); // enter drag mode
 
     const onMove = (ev) => {
       const d = dragRef.current;
@@ -102,18 +146,26 @@ export default function AnnotationCanvas({ x: initX, y: initY, isSelected, onSel
         nw = Math.max(MIN_SIZE, d.startW + dx);
       }
 
-      setPos({ x: nx, y: ny, w: nw, h: nh });
+      const newPos = { x: nx, y: ny, w: nw, h: nh };
+      lastPosRef.current = newPos;
+      setDragPos(newPos);
     };
 
     const onUp = () => {
       dragRef.current = null;
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup',   onUp);
+      // Report final percentages to parent, then exit drag mode.
+      if (lastPosRef.current) {
+        onChange?.(pxToPct(lastPosRef.current, pageWidth, pageHeight));
+        lastPosRef.current = null;
+      }
+      setDragPos(null);
     };
 
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup',   onUp);
-  }, []);
+  }, [initX, initY, initW, initH, pageWidth, pageHeight, onChange]);
 
   // ── Render ────────────────────────────────────────────────────────────────
   const { x, y, w, h } = pos;
@@ -143,7 +195,7 @@ export default function AnnotationCanvas({ x: initX, y: initY, isSelected, onSel
         onMouseDown={e => { onSelect?.(); startDrag(e, 'move'); }}
       />
 
-      {/* Resize handles — only visible when this annotation is selected */}
+      {/* Resize handles — only visible when selected */}
       {isSelected && (
         <>
           <Handle

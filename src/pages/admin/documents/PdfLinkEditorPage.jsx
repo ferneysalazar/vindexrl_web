@@ -469,15 +469,29 @@ export default function PdfLinkEditorPage() {
     if (!e.shiftKey) return;
     // Shift+click — create a new annotation centred on the click point.
     const rect = e.currentTarget.getBoundingClientRect();
-    const x  = Math.max(0, Math.round(e.clientX - rect.left - 15));
-    const y  = Math.max(0, Math.round(e.clientY - rect.top  - 10));
+    // Convert pixel click position to page-relative percentages so the
+    // annotation position is immune to the current zoom level.
+    const x = Math.max(0, (e.clientX - rect.left - 15) * 100 / pageWidth);
+    const y = Math.max(0, (e.clientY - rect.top  - 10) * 100 / pageHeight);
+    const w = 30 * 100 / pageWidth;
+    const h = 20 * 100 / pageHeight;
     const id = crypto.randomUUID();
     setAnnotations(prev => ({
       ...prev,
-      [pageIndex]: [...(prev[pageIndex] ?? []), { id, x, y }],
+      [pageIndex]: [...(prev[pageIndex] ?? []), { id, x, y, w, h }],
     }));
     setSelectedAnnId(id);
-  }, [setAnnotations, setSelectedAnnId]);
+  }, [pageWidth, pageHeight, setAnnotations, setSelectedAnnId]);
+
+  // Updates the stored percentage values for one annotation after a drag/resize.
+  const handleAnnotationChange = useCallback((pageIndex, id, pct) => {
+    setAnnotations(prev => ({
+      ...prev,
+      [pageIndex]: (prev[pageIndex] ?? []).map(ann =>
+        ann.id === id ? { ...ann, ...pct } : ann
+      ),
+    }));
+  }, []);
 
   return (
     <>
@@ -589,8 +603,13 @@ export default function PdfLinkEditorPage() {
                       key={ann.id}
                       x={ann.x}
                       y={ann.y}
+                      w={ann.w}
+                      h={ann.h}
+                      pageWidth={pageWidth}
+                      pageHeight={pageHeight}
                       isSelected={selectedAnnId === ann.id}
                       onSelect={() => setSelectedAnnId(ann.id)}
+                      onChange={pct => handleAnnotationChange(i, ann.id, pct)}
                     />
                   ))}
                 </div>
