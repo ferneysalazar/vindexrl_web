@@ -40,6 +40,7 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { I } from '../../../icons';
 import { rasterDocs, rasterPages } from '../../../services/api';
 import VrlToolbar from '../../../components/editor/VrlToolbar';
+import { documentLinks as documentLinksApi } from '../../../services/api';
 import AnnotationCanvas from '../../../components/editor/AnnotationCanvas';
 
 const THUMBNAIL_WIDTH  = 110;
@@ -428,9 +429,60 @@ export default function PdfLinkEditorPage() {
   const pageHeight = Math.round(1123 * zoom);
   const pages      = pageCount ? Array.from({ length: pageCount }, (_, i) => i + 1) : [];
 
-  // ── Annotations: { [pageIndex]: [{ id, x, y }] } ─────────────────────────
-  const [annotations,   setAnnotations]   = useState({});
-  const [selectedAnnId, setSelectedAnnId] = useState(null);
+  // ── Annotations: { [pageIndex]: [{ id, x, y, w, h }] } ──────────────────
+  const [annotations,      setAnnotations]      = useState({});
+  const [selectedAnnId,    setSelectedAnnId]    = useState(null);
+  // initialLinkData seeds VrlToolbar's per-spot form store and linkDocumentIds
+  // on mount so the link panel shows pre-saved values for existing annotations.
+  const [initialLinkData,  setInitialLinkData]  = useState([]);
+
+  // Load existing document links when the document ID is available.
+  // Each record contains position data (page, page_xpos/ypos/width/height) that
+  // lets us reconstruct the annotation rectangles, plus the full link form state.
+  // The `page` field is treated as 0-based to match annotations[pageIndex].
+  useEffect(() => {
+    if (!docId) return;
+    documentLinksApi.list(docId)
+      .then(links => {
+        if (!Array.isArray(links) || !links.length) return;
+        const newAnnotations = {};
+        const newLinkData    = [];
+        links.forEach(link => {
+          const spotId    = crypto.randomUUID();
+          const pageIndex = link.page; // 0-based; change to (link.page - 1) if API uses 1-based
+          if (!newAnnotations[pageIndex]) newAnnotations[pageIndex] = [];
+          newAnnotations[pageIndex].push({
+            id: spotId,
+            x:  link.page_xpos,
+            y:  link.page_ypos,
+            w:  link.page_width,
+            h:  link.page_height,
+          });
+          newLinkData.push({
+            spotId,
+            linkDocumentId: link.id,
+            formState: {
+              linkTypeId:         link.link_type_id             ?? '',
+              linkSide:           link.link_side === 'A'        ? 'active'    : 'passive',
+              linkGender:         link.target_document_gender === 'M' ? 'masculine' : 'feminine',
+              articleToggle:      link.specific_article         ?? false,
+              articleText:        link.target_article_text      ?? '',
+              articleAnchor:      link.target_article_anchor    ?? '',
+              linkText:           link.link_text                ?? '',
+              // Treat a non-empty saved link_text as manually set so it displays as-is.
+              linkTextUserEdited: !!link.link_text,
+              selectedDocId:      link.target_document_id       ?? null,
+              // selectedDocName is not returned by this endpoint; the computed
+              // link text will fall back to the saved link_text above.
+              selectedDocName:    null,
+            },
+          });
+        });
+        setAnnotations(newAnnotations);
+        setInitialLinkData(newLinkData);
+      })
+      .catch(err => console.error('Failed to load document links:', err));
+  }, [docId]);
 
   // Deselects all annotations. Also wired to Escape key; call programmatically when needed.
   const deselectAll = useCallback(() => setSelectedAnnId(null), [setSelectedAnnId]);
@@ -626,6 +678,7 @@ export default function PdfLinkEditorPage() {
         currentSpotIndex={currentSpotIndex}
         onNavigate={handleNavigate}
         sourceDocumentId={docId ?? null}
+        initialLinkData={initialLinkData}
       />
     </>
   );

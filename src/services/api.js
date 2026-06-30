@@ -80,8 +80,13 @@ export const linkTypes = {
 };
 
 export const documentLinks = {
-  create: (body)     => request('/documentLink', { method: 'POST', body: JSON.stringify(body) }),
-  update: (id, body) => request(`/documentLink/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+  // GET /documentLinks?srcId=<sourceDocumentId>
+  // Returns all link records for a document. Response objects include position
+  // fields (page, page_xpos, page_ypos, page_width, page_height) so the React
+  // viewer can reconstruct annotation rectangles without touching the HTML.
+  list:   (srcId)        => request('/documentLinks' + toQuery({ srcId })),
+  create: (body)         => request('/documentLink',      { method: 'POST', body: JSON.stringify(body) }),
+  update: (id, body)     => request(`/documentLink/${id}`, { method: 'PUT',  body: JSON.stringify(body) }),
 };
 
 export const documentEntities = {

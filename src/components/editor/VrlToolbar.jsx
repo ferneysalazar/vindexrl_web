@@ -444,6 +444,8 @@ export default function VrlToolbar({
   currentSpotIndex = -1,
   undoEnabled = false,
   sourceDocumentId = null,
+  // Pre-seeded from GET /documentLinks: [{ spotId, linkDocumentId, formState }]
+  initialLinkData = [],
   onDeleteSpots,
   onUndo,
   onNavigate,
@@ -482,6 +484,22 @@ export default function VrlToolbar({
   // linkDocumentIds must be state (not a ref) because it is read during render
   // to decide "Save link" vs "Update link".
   const [linkDocumentIds, setLinkDocumentIds] = useState({});
+
+  // Seed per-spot stores from pre-loaded document links (runs once on mount /
+  // whenever the parent finishes the GET /documentLinks fetch).
+  useEffect(() => {
+    if (!initialLinkData.length) return;
+    const newIds = {};
+    initialLinkData.forEach(({ spotId, linkDocumentId, formState: fs }) => {
+      const seeded = { ...DEFAULT_FORM, ...fs };
+      linkPropsStoreRef.current[spotId] = seeded;
+      baselineStoreRef.current[spotId]  = seeded;
+      if (linkDocumentId) newIds[spotId] = linkDocumentId;
+    });
+    if (Object.keys(newIds).length) {
+      setLinkDocumentIds(prev => ({ ...prev, ...newIds }));
+    }
+  }, [initialLinkData]);
 
   // Ref always holds the latest formState so the navigation effect can read it
   // without stale-closure issues. Updated synchronously before the nav effect below.
@@ -580,6 +598,9 @@ export default function VrlToolbar({
     const existingLinkDocId = linkDocumentIds[currentSpotId] ?? null;
     setSaveLinkStatus('saving');
 
+    // Look up the annotation's current position from the sorted spots array.
+    const spotData = spots.find(s => s.id === currentSpotId);
+
     const payload = {
       link_id:                currentSpotId,
       source_document_id:     sourceDocumentId,
@@ -591,6 +612,12 @@ export default function VrlToolbar({
       target_article_text:    formState.articleToggle ? (formState.articleText.trim()   || null) : null,
       target_article_anchor:  formState.articleToggle ? (formState.articleAnchor.trim() || null) : null,
       link_text:              displayLinkText.trim() || null,
+      // Annotation position as percentages (0-based page index).
+      page:        spotData?.pageIndex ?? null,
+      page_xpos:   spotData?.x        ?? null,
+      page_ypos:   spotData?.y        ?? null,
+      page_width:  spotData?.w        ?? null,
+      page_height: spotData?.h        ?? null,
     };
 
     try {
@@ -611,7 +638,7 @@ export default function VrlToolbar({
       setSaveLinkStatus('error');
       setTimeout(() => setSaveLinkStatus('idle'), 2000);
     }
-  }, [currentSpotId, linkDocumentIds, sourceDocumentId, formState, displayLinkText]);
+  }, [currentSpotId, linkDocumentIds, sourceDocumentId, formState, displayLinkText, spots]);
 
   // ── Document search ──────────────────────────────────────────────────────
   const [searchType,    setSearchType]    = useState('');
