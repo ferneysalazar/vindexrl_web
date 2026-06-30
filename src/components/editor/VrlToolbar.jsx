@@ -602,6 +602,7 @@ export default function VrlToolbar({
     const spotData = spots.find(s => s.id === currentSpotId);
 
     const payload = {
+      id:                     currentSpotId,
       source_document_id:     sourceDocumentId,
       target_document_id:     formState.selectedDocId,
       link_type_id:           formState.linkTypeId    || null,
