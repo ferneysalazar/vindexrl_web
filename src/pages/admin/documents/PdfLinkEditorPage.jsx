@@ -429,19 +429,35 @@ export default function PdfLinkEditorPage() {
   const pages      = pageCount ? Array.from({ length: pageCount }, (_, i) => i + 1) : [];
 
   // ── View / edit mode ─────────────────────────────────────────────────────
+  // Toggled by the linkEditMode / linkViewMode icon button in the toolbar.
+  //
+  //   editMode (false) — default working mode:
+  //     • Shift+drag on a page draws a new annotation rectangle.
+  //     • Each AnnotationCanvas shows interactive move/resize handles.
+  //
+  //   viewMode (true) — read-only inspection mode:
+  //     • Shift+drag is disabled; no new annotations can be created.
+  //     • Handles are hidden; rectangles cannot be moved or resized.
+  //     • Each annotation shows a 16 × 16 px colored badge at its top-left
+  //       corner whose color and initial letter identify the assigned link type.
   const [isViewMode, setIsViewMode] = useState(false);
 
-  // ── Link types (for badge colors in view mode) ────────────────────────────
+  // ── Link types (for viewMode badge colors and initials) ───────────────────
+  // Fetched once on mount from GET /link-types.  The response includes a `color`
+  // field (6-char hex without '#') and a `name` field used to derive the badge
+  // initial letter.  Kept in state so annotations re-render automatically if the
+  // list ever refreshed (not expected in normal use, but defensive).
   const [linkTypesList, setLinkTypesList] = useState([]);
 
   useEffect(() => {
     linkTypesApi.list()
       .then(data => {
+        // API returns { data: [...] } pagination wrapper or a bare array.
         const list = Array.isArray(data) ? data
           : Array.isArray(data?.data) ? data.data : [];
         setLinkTypesList(list);
       })
-      .catch(() => {});
+      .catch(() => {}); // non-fatal — badges fall back to the default red color
   }, []);
 
   // ── Annotations: { [pageIndex]: [{ id, x, y, w, h }] } ──────────────────
@@ -451,8 +467,25 @@ export default function PdfLinkEditorPage() {
   // { pageIndex, x, y, w, h } in pixels relative to the page, or null.
   const [drawingRect,      setDrawingRect]      = useState(null);
 
-  // spotId → linkTypeId — kept in sync with the VrlToolbar form so viewMode
-  // badges reflect the currently selected link type even before saving.
+  // ── spotId → display data for the viewMode info panel ────────────────────
+  // { [spotId]: { displayLinkText: string, selectedDocId: string|null } }
+  // Seeded from the GET /documentLinks load; updated live via onSpotDataChange
+  // so the panel text updates even before the user hits "Save link".
+  const [spotDisplayData, setSpotDisplayData] = useState({});
+
+  // ── spotId → linkTypeId map ───────────────────────────────────────────────
+  // Tracks which link type is currently assigned to each annotation spot so
+  // that viewMode badges can show the correct color and initial letter.
+  //
+  // Populated from two sources:
+  //   1. On load — seeded from the GET /documentLinks response (see the effect
+  //      below) so existing saved links immediately show the right badge color.
+  //   2. On change — updated in real time via handleSpotLinkTypeChange, which
+  //      VrlToolbar calls whenever the user changes the link-type dropdown.
+  //      This means the badge updates live even before the user hits "Save link".
+  //
+  // A spotId without an entry in this map (newly drawn annotation not yet
+  // assigned a type) falls back to the default red badge with no letter.
   const [spotLinkTypes, setSpotLinkTypes] = useState({});
   // initialLinkData seeds VrlToolbar's per-spot form store and linkDocumentIds
   // on mount so the link panel shows pre-saved values for existing annotations.
@@ -504,12 +537,29 @@ export default function PdfLinkEditorPage() {
         });
         setInitialLinkData(newLinkData);
 
-        // Seed the spotId → linkTypeId map so viewMode badges are ready immediately.
+        // Seed spotLinkTypes from the freshly loaded links so that switching to
+        // viewMode immediately shows the correct badge color for every annotation,
+        // without requiring the user to open each spot's form panel first.
+        // Only spots that already have a link_type_id are added; newly-created
+        // spots (not yet saved) will use the default red badge.
         const types = {};
         newLinkData.forEach(({ spotId, formState: fs }) => {
           if (fs?.linkTypeId) types[spotId] = fs.linkTypeId;
         });
         if (Object.keys(types).length) setSpotLinkTypes(types);
+
+        // Seed the info-panel display data from the saved records.
+        // `linkTextUserEdited` is true whenever link_text is non-empty (see form
+        // state mapping above), so formState.linkText IS the displayLinkText for
+        // saved spots.  Unsaved (new) spots will get their data via onSpotDataChange.
+        const display = {};
+        newLinkData.forEach(({ spotId, formState: fs }) => {
+          display[spotId] = {
+            displayLinkText: fs.linkText       || '',
+            selectedDocId:   fs.selectedDocId  || null,
+          };
+        });
+        if (Object.keys(display).length) setSpotDisplayData(display);
       })
       .catch(err => console.error('Failed to load document links:', err));
   }, [docId]);
@@ -547,21 +597,73 @@ export default function PdfLinkEditorPage() {
     pageRefs.current[spot.pageIndex]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }, [sortedSpots]);
 
+  /**
+   * handleSpotLinkTypeChange — called by VrlToolbar whenever the user changes
+   * the link-type dropdown for a spot.
+   *
+   * Keeps `spotLinkTypes` in sync so the viewMode badge color updates
+   * immediately in the AnnotationCanvas without waiting for a Save.
+   */
   const handleSpotLinkTypeChange = useCallback((spotId, linkTypeId) => {
     setSpotLinkTypes(prev => ({ ...prev, [spotId]: linkTypeId }));
   }, []);
 
+  /**
+   * handleSpotDataChange — called by VrlToolbar whenever the display text or
+   * target document changes for the active spot.  Keeps spotDisplayData in sync
+   * so the viewMode info panel always shows up-to-date content without requiring
+   * the user to save first.
+   */
+  const handleSpotDataChange = useCallback((spotId, displayLinkText, selectedDocId) => {
+    setSpotDisplayData(prev => ({ ...prev, [spotId]: { displayLinkText, selectedDocId } }));
+  }, []);
+
+  /**
+   * handlePageMouseDown — creates a new annotation on Shift+mousedown.
+   *
+   * ── Guard conditions ─────────────────────────────────────────────────────
+   *   • Ignored in viewMode — annotations are read-only, not editable.
+   *   • Ignored when Shift is not held — allows normal text selection / scrolling.
+   *   • preventDefault() stops the browser's native Shift-click text selection.
+   *
+   * ── Drag-to-draw ─────────────────────────────────────────────────────────
+   *   The page rect is captured at mousedown so all subsequent mousemove
+   *   calculations use the same reference point (avoids jitter if the page
+   *   scrolls mid-drag).  The `drawingRect` state is updated on every
+   *   mousemove to render a live ghost rectangle overlay on the page.
+   *
+   *   On mouseup the final pixel dimensions determine which branch is taken:
+   *     • pw ≥ 10 px AND ph ≥ 10 px → use the user-drawn rectangle exactly.
+   *     • Otherwise (a near-click) → fall back to a 30 × 20 px default
+   *       rectangle centred on the click point (original behaviour preserved).
+   *
+   *   Coordinates are stored as percentages of the current rendered page size
+   *   so they survive zoom-level changes without recalculation.
+   *
+   * ── Listeners ────────────────────────────────────────────────────────────
+   *   mousemove / mouseup are attached to `document` (not the page div) so
+   *   the drag continues correctly even if the pointer leaves the page area.
+   *   Both listeners remove themselves in onUp.
+   */
   const handlePageMouseDown = useCallback((e, pageIndex) => {
+    // Blocked in viewMode — annotations cannot be created while reviewing.
     if (isViewMode) return;
+    // Only activate on Shift+mousedown to avoid interfering with normal clicks.
     if (!e.shiftKey) return;
+    // Prevent the browser from extending a text selection on Shift+click.
     e.preventDefault();
 
+    // Capture the page element's viewport position at drag-start so all
+    // subsequent coordinate calculations use a stable reference frame.
     const pageRect = e.currentTarget.getBoundingClientRect();
     const startX   = e.clientX - pageRect.left;
     const startY   = e.clientY - pageRect.top;
 
+    // Initialise the ghost rectangle at the click point with zero size.
     setDrawingRect({ pageIndex, x: startX, y: startY, w: 0, h: 0 });
 
+    // Update the ghost rect on every mousemove so the user sees live feedback.
+    // Math.min(startX, curX) / Math.max handles dragging in any direction.
     const onMove = (ev) => {
       const curX = ev.clientX - pageRect.left;
       const curY = ev.clientY - pageRect.top;
@@ -577,10 +679,12 @@ export default function PdfLinkEditorPage() {
     const onUp = (ev) => {
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup',   onUp);
+      // Clear the ghost rect immediately so it disappears on release.
       setDrawingRect(null);
 
       const curX = ev.clientX - pageRect.left;
       const curY = ev.clientY - pageRect.top;
+      // Normalise: top-left corner + positive width/height regardless of drag direction.
       const px   = Math.max(0, Math.min(startX, curX));
       const py   = Math.max(0, Math.min(startY, curY));
       const pw   = Math.abs(curX - startX);
@@ -589,13 +693,16 @@ export default function PdfLinkEditorPage() {
       const id = crypto.randomUUID();
       let x, y, w, h;
       if (pw >= 10 && ph >= 10) {
-        // Use the custom drag rectangle.
+        // Drag was large enough — use the exact user-drawn dimensions.
+        // Convert pixel coords to page-relative percentages so position
+        // survives zoom changes (zoom affects pageWidth/pageHeight, not the %).
         x = px * 100 / pageWidth;
         y = py * 100 / pageHeight;
         w = pw * 100 / pageWidth;
         h = ph * 100 / pageHeight;
       } else {
-        // Too small — fall back to default size centred on the click point.
+        // Near-click (no meaningful drag) — fall back to a 30 × 20 px default
+        // rectangle centred approximately on the original click point.
         x = Math.max(0, (startX - 15) * 100 / pageWidth);
         y = Math.max(0, (startY - 10) * 100 / pageHeight);
         w = 30 * 100 / pageWidth;
@@ -606,6 +713,7 @@ export default function PdfLinkEditorPage() {
         ...prev,
         [pageIndex]: [...(prev[pageIndex] ?? []), { id, x, y, w, h }],
       }));
+      // Auto-select the new annotation so the link panel opens for it immediately.
       setSelectedAnnId(id);
     };
 
@@ -686,8 +794,19 @@ export default function PdfLinkEditorPage() {
             </button>
           ))}
 
+          {/* Separator before mode toggle */}
           <div className="w-px h-5 bg-slate-200 mx-1" />
 
+          {/*
+           * Edit / View mode toggle button.
+           *
+           * Icon shown reflects the CURRENT mode (not the action):
+           *   linkEditMode icon → user is in editMode (handles visible, drawing enabled)
+           *   linkViewMode icon → user is in viewMode (read-only, colored badges)
+           *
+           * Active style (dark background) when viewMode is on so the user can
+           * tell at a glance which mode is active.
+           */}
           <button
             onClick={() => setIsViewMode(v => !v)}
             title={isViewMode ? 'Switch to edit mode' : 'Switch to view mode'}
@@ -741,12 +860,34 @@ export default function PdfLinkEditorPage() {
                     )}
                   </div>
 
-                  {/* Annotation canvases — absolutely positioned over the page */}
+                  {/*
+                   * Annotation canvases — absolutely positioned over the page image.
+                   *
+                   * For each annotation on this page we derive the badge appearance
+                   * before rendering so AnnotationCanvas stays presentation-only:
+                   *
+                   *   linkTypeId  — looked up from spotLinkTypes (spotId → typeId map).
+                   *                 undefined for newly drawn, unsaved annotations.
+                   *   lt          — full link type object from linkTypesList.
+                   *                 null if type not yet assigned or list not loaded.
+                   *   badgeColor  — lt.color is a 6-char hex string without '#';
+                   *                 we prepend '#' to make it a valid CSS value.
+                   *                 Falls back to red (#dc2626) when no type assigned.
+                   *   badgeLetter — first letter of the link type name, uppercased.
+                   *                 Empty string when no type assigned (badge shows blank).
+                   *
+                   * All of these are only consumed in viewMode; in editMode the
+                   * AnnotationCanvas ignores them and renders the standard handles.
+                   */}
                   {(annotations[i] ?? []).map(ann => {
-                    const linkTypeId = spotLinkTypes[ann.id];
-                    const lt         = linkTypeId ? linkTypesList.find(l => String(l.id) === String(linkTypeId)) : null;
-                    const badgeColor  = lt?.color ? `#${lt.color}` : '#dc2626';
-                    const badgeLetter = lt ? (lt.name || lt.label || '').charAt(0).toUpperCase() : '';
+                    const linkTypeId      = spotLinkTypes[ann.id];
+                    const lt              = linkTypeId ? linkTypesList.find(l => String(l.id) === String(linkTypeId)) : null;
+                    // API returns color as raw hex (e.g. "0D98BA"); prepend '#' for CSS.
+                    const badgeColor      = lt?.color ? `#${lt.color}` : '#dc2626';
+                    const badgeLetter     = lt ? (lt.name || lt.label || '').charAt(0).toUpperCase() : '';
+                    const displayData     = spotDisplayData[ann.id] ?? {};
+                    const displayLinkText = displayData.displayLinkText || '';
+                    const spotDocId       = displayData.selectedDocId   || null;
                     return (
                       <AnnotationCanvas
                         key={ann.id}
@@ -762,6 +903,8 @@ export default function PdfLinkEditorPage() {
                         viewMode={isViewMode}
                         badgeColor={badgeColor}
                         badgeLetter={badgeLetter}
+                        displayLinkText={displayLinkText}
+                        selectedDocId={spotDocId}
                       />
                     );
                   })}
@@ -797,6 +940,7 @@ export default function PdfLinkEditorPage() {
         sourceDocumentId={docId ?? null}
         initialLinkData={initialLinkData}
         onSpotLinkTypeChange={handleSpotLinkTypeChange}
+        onSpotDataChange={handleSpotDataChange}
       />
     </>
   );

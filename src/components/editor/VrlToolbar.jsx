@@ -451,9 +451,35 @@ export default function VrlToolbar({
   onNavigate,
   onSave,
   onViewToggle,
-  // Called with (spotId, linkTypeId) whenever the user changes a spot's link type,
-  // so the parent can update viewMode badge colors in real time.
+  /**
+   * onSpotLinkTypeChange(spotId, linkTypeId)
+   *
+   * Optional callback fired whenever the user selects a different link type
+   * from the dropdown for the currently active annotation spot.
+   *
+   * The parent (PdfLinkEditorPage) uses this to keep its `spotLinkTypes` map
+   * up to date so that viewMode badge colors reflect the current selection in
+   * real time — before the user clicks "Save link" and the change is persisted.
+   *
+   * Only called when `linkTypeId` is part of the form patch, not on every
+   * field change, to avoid unnecessary state updates in the parent.
+   */
   onSpotLinkTypeChange,
+  /**
+   * onSpotDataChange(spotId, displayLinkText, selectedDocId)
+   *
+   * Optional callback fired whenever the display text or target document
+   * changes for the currently active spot.
+   *
+   * The parent (PdfLinkEditorPage) stores this in `spotDisplayData` so the
+   * viewMode info panel shows the current link text and correct <a> href
+   * in real time — again, without needing a save.
+   *
+   * Implemented as a useEffect watching `displayLinkText` and
+   * `formState.selectedDocId`, so it fires both on spot navigation (text
+   * loads from the store) and on any form change that updates the derived text.
+   */
+  onSpotDataChange,
 }) {
   // ── Link types (fetched once on mount) ───────────────────────────────────
   const [linkTypesList, setLinkTypesList] = useState([]);
@@ -571,6 +597,9 @@ export default function VrlToolbar({
       return next;
     });
     setIsDirty(true);
+    // Notify the parent whenever the link type changes so it can update the
+    // viewMode badge color immediately — only fires for linkTypeId patches
+    // to avoid triggering a parent re-render on every keystroke in other fields.
     if ('linkTypeId' in patch && currentSpotId) {
       onSpotLinkTypeChange?.(currentSpotId, patch.linkTypeId);
     }
@@ -586,6 +615,15 @@ export default function VrlToolbar({
       return next;
     });
   }, [currentSpotId]);
+
+  // ── Notify parent of display-text / doc-id changes ──────────────────────
+  // Fires whenever the computed or edited link text changes for the active spot,
+  // OR when a different spot is selected, so the parent always has the latest
+  // text for the viewMode info panel without waiting for a save.
+  useEffect(() => {
+    if (!currentSpotId) return;
+    onSpotDataChange?.(currentSpotId, displayLinkText, formState.selectedDocId);
+  }, [currentSpotId, displayLinkText, formState.selectedDocId, onSpotDataChange]);
 
   // ── Cancel ───────────────────────────────────────────────────────────────
   const handleLinkPropsCancel = useCallback(() => {

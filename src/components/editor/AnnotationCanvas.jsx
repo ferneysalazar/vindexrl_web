@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useLayoutEffect } from 'react';
 
 const HANDLE_SIZE = 12; // px — square handle dimensions
 const MIN_SIZE    = 10; // px — minimum rectangle width / height
@@ -49,35 +49,105 @@ function pxToPct({ x, y, w, h }, pageWidth, pageHeight) {
   };
 }
 
+// ── Link text renderer ────────────────────────────────────────────────────────
+
+/**
+ * Renders a link-text string into React nodes, turning every {curly brace}
+ * segment into a clickable <a> element — the same convention used by the
+ * vrl-toolbar.js annotation engine in the HTML document viewer.
+ *
+ * Pattern:  "Deroga {Decreto 123 de 2020}" with selectedDocId "abc-123"
+ * Output:   "Deroga " + <a href="viewDocument?docId=abc-123">Decreto 123 de 2020</a>
+ *
+ * When selectedDocId is null the curly-brace content renders as plain text.
+ * When text is empty / null the function returns null (renders nothing).
+ */
+function renderLinkText(text, selectedDocId) {
+  if (!text) return null;
+  // Split on {…} groups, keeping the delimiters so odd-indexed parts are the
+  // curly-brace segments and even-indexed parts are the plain text in between.
+  const parts = text.split(/(\{[^}]+\})/);
+  return parts.map((part, i) => {
+    const match = part.match(/^\{([^}]+)\}$/);
+    if (!match) return part || null; // plain text segment (may be empty)
+    const inner = match[1]; // text inside the curly braces
+    return selectedDocId
+      ? <a key={i} href={`viewDocument?docId=${selectedDocId}`} target="_blank" rel="noreferrer">{inner}</a>
+      : inner; // no doc linked yet — render plain
+  });
+}
+
 // ── AnnotationCanvas ──────────────────────────────────────────────────────────
 
 /**
- * Props:
- *   x, y, w, h   — position / size as percentages of pageWidth / pageHeight
- *   pageWidth    — current rendered page width  in px (changes with zoom)
- *   pageHeight   — current rendered page height in px (changes with zoom)
- *   isSelected   — whether resize handles are visible
- *   onSelect     — called when the red handle is pressed
- *   onChange     — called on drag/resize end with { x, y, w, h } in percentages
+ * AnnotationCanvas — a single draggable / resizable annotation rectangle
+ * rendered as an absolutely-positioned overlay on top of a PDF page image.
  *
- * Position strategy:
- *   When at rest `pos` is derived directly from percentage props × page
- *   dimensions, so it automatically corrects when zoom changes — no sync
- *   effect required. During a drag, `dragPos` (pixels) overrides the
- *   derived value to give smooth movement; it is cleared on mouseup after
+ * ── Coordinate system ────────────────────────────────────────────────────────
+ *   All public props (x, y, w, h) are expressed as PERCENTAGES of the rendered
+ *   page dimensions so annotations stay in the correct position regardless of
+ *   the current zoom level.  Internally the component converts to pixels for
+ *   layout and canvas drawing, then converts back to percentages before
+ *   reporting changes to the parent via `onChange`.
+ *
+ * ── Modes ────────────────────────────────────────────────────────────────────
+ *   editMode (viewMode = false — default):
+ *     • A red 12 × 12 px square in the top-left corner acts as a "grab handle".
+ *       Pressing it selects the annotation AND starts a move-drag.
+ *     • Four blue resize handles appear at the mid-points of each edge when the
+ *       annotation is selected (isSelected = true).
+ *     • All handles have pointerEvents: 'all' so they capture mouse events even
+ *       though the parent wrapper has pointerEvents: 'none'.
+ *
+ *   viewMode (viewMode = true):
+ *     • All interactive handles are hidden — the annotation is read-only.
+ *     • A 16 × 16 px colored badge replaces the red handle.  The badge color
+ *       comes from the link type assigned to this spot (badgeColor prop), and
+ *       the badge shows the first letter of the link type name (badgeLetter).
+ *     • Falls back to red / empty when no link type has been assigned.
+ *
+ * ── Props ────────────────────────────────────────────────────────────────────
+ *   x, y, w, h     — position / size as percentages of pageWidth / pageHeight
+ *   pageWidth      — current rendered page width  in px (changes with zoom)
+ *   pageHeight     — current rendered page height in px (changes with zoom)
+ *   isSelected     — show resize handles (editMode only)
+ *   onSelect       — called when the red move handle is pressed (editMode only)
+ *   onChange       — called on drag/resize end with { x, y, w, h } percentages
+ *   viewMode       — true = read-only view with colored type badge
+ *   badgeColor     — CSS color string for the viewMode badge (e.g. '#0D98BA')
+ *   badgeLetter    — single letter shown inside the viewMode badge
+ *
+ * ── Drag / resize mechanics ──────────────────────────────────────────────────
+ *   When at rest, `pos` is derived directly from percentage props × page
+ *   dimensions, so it auto-corrects on zoom changes — no sync effect needed.
+ *   During a drag, `dragPos` (pixels) overrides the derived value to give
+ *   smooth pointer-following movement; it is cleared on mouseup after
  *   `onChange` reports the final percentages back to the parent.
  */
 export default function AnnotationCanvas({
   x: initX, y: initY, w: initW, h: initH,
   pageWidth, pageHeight,
   isSelected, onSelect, onChange,
-  viewMode   = false,
-  badgeColor = '#dc2626',
+  // viewMode: when true the annotation is display-only — no handles, no drag.
+  viewMode    = false,
+  // badgeColor: hex CSS color for the viewMode top-left badge (with leading #).
+  badgeColor  = '#dc2626',
+  // badgeLetter: first letter of the link type name displayed inside the badge.
   badgeLetter = '',
+  // displayLinkText: the computed or saved link text for this spot.
+  // May contain {curly brace} segments that become <a> elements in viewMode.
+  displayLinkText = '',
+  // selectedDocId: UUID of the target document; used to build the <a> href.
+  selectedDocId   = null,
 }) {
   const canvasRef  = useRef(null);
+  const wrapperRef = useRef(null); // ref on the outer positioned div
   const dragRef    = useRef(null);
   const lastPosRef = useRef(null); // tracks final pixel pos during drag
+
+  // Width (px) of the viewMode info panel.  Computed via useLayoutEffect when
+  // the panel first appears so it never overflows the left edge of the viewport.
+  const [panelWidth, setPanelWidth] = useState(350);
 
   // `dragPos` is only non-null while a drag is in progress.
   const [dragPos, setDragPos] = useState(null);
@@ -89,6 +159,18 @@ export default function AnnotationCanvas({
   // Keep a ref in sync so drag closures always read the latest pixel pos.
   const posRef = useRef(pos);
   useEffect(() => { posRef.current = pos; });
+
+  // ── Panel width — computed on first appearance to avoid left-edge overflow ─
+  // The panel is anchored right: 100% (extends leftward from the rectangle).
+  // We measure the rectangle's viewport left offset when the panel opens and
+  // cap the width so the panel never bleeds off the left side of the screen.
+  useLayoutEffect(() => {
+    if (!viewMode || !isSelected || !wrapperRef.current) return;
+    const rect = wrapperRef.current.getBoundingClientRect();
+    // rect.left = distance from viewport left edge to the rectangle's left edge.
+    // Subtract 8 px for a small breathing margin against the viewport boundary.
+    setPanelWidth(Math.min(350, Math.max(80, Math.floor(rect.left) - 8)));
+  }, [viewMode, isSelected]);
 
   // ── Draw dashed rectangle whenever dimensions change ──────────────────────
   useEffect(() => {
@@ -175,6 +257,7 @@ export default function AnnotationCanvas({
 
   return (
     <div
+      ref={wrapperRef}
       style={{
         position:      'absolute',
         left:          x,
@@ -182,6 +265,9 @@ export default function AnnotationCanvas({
         width:         w,
         height:        h,
         pointerEvents: 'none',
+        // Raise the selected annotation above its siblings so the info panel
+        // (which overflows the rectangle bounds leftward) is never obscured.
+        zIndex: (viewMode && isSelected) ? 100 : 1,
       }}
     >
       <canvas
@@ -192,42 +278,119 @@ export default function AnnotationCanvas({
       />
 
       {viewMode ? (
-        /* View mode — colored badge at top-left, no interaction */
-        <div
-          style={{
-            position:       'absolute',
-            left:           0,
-            top:            0,
-            width:          16,
-            height:         16,
-            marginLeft:     -8,
-            marginTop:      -8,
-            background:     badgeColor,
-            borderRadius:   2,
-            border:         '1.5px solid #fff',
-            boxShadow:      '0 1px 3px rgba(0,0,0,0.35)',
-            display:        'flex',
-            alignItems:     'center',
-            justifyContent: 'center',
-            color:          '#fff',
-            fontSize:       9,
-            fontWeight:     700,
-            lineHeight:     1,
-            userSelect:     'none',
-          }}
-        >
-          {badgeLetter}
-        </div>
-      ) : (
+        /**
+         * VIEW MODE
+         *
+         * Three layers, all inside the pointerEvents:'none' wrapper:
+         *
+         *  1. Clickable overlay — an invisible div covering the full rectangle
+         *     area with pointerEvents:'all' so the user can click anywhere on
+         *     the annotation to select it (mirrors the red handle in edit mode).
+         *
+         *  2. Colored badge — 16 × 16 px square at the top-left corner
+         *     showing the link type color and initial letter.  Rendered above
+         *     the overlay (later in DOM) so it is always visible.
+         *
+         *  3. Info panel — shown only when the annotation is selected.
+         *     Anchored right:100% (right edge flush with the rectangle's left
+         *     border) and top:8px (just below the badge's bottom edge, since
+         *     the badge center is at y=0, so badge bottom = +8 px).
+         *     Width is clamped by useLayoutEffect so it never overflows the
+         *     viewport's left edge.  The 6 px left border uses the link type
+         *     color.  Link text is rendered with {curly} → <a> substitution.
+         */
         <>
-          {/* Red move handle — always visible; clicking it selects this annotation */}
+          {/* 1. Full-rectangle click target */}
+          <div
+            style={{
+              position:      'absolute',
+              inset:         0,
+              pointerEvents: 'all',
+              cursor:        'pointer',
+            }}
+            onClick={() => onSelect?.()}
+          />
+
+          {/* 2. Link-type badge — top-left corner, centered on the corner point */}
+          <div
+            style={{
+              position:       'absolute',
+              left:           0,
+              top:            0,
+              width:          16,
+              height:         16,
+              marginLeft:     -8,
+              marginTop:      -8,
+              background:     badgeColor,
+              borderRadius:   2,
+              border:         '1.5px solid #fff',
+              boxShadow:      '0 1px 3px rgba(0,0,0,0.35)',
+              display:        'flex',
+              alignItems:     'center',
+              justifyContent: 'center',
+              color:          '#fff',
+              fontSize:       9,
+              fontWeight:     700,
+              lineHeight:     1,
+              userSelect:     'none',
+              pointerEvents:  'none',
+            }}
+          >
+            {badgeLetter}
+          </div>
+
+          {/* 3. Info panel — visible only while this annotation is selected */}
+          {isSelected && (
+            <div
+              style={{
+                position:        'absolute',
+                right:           '100%',        // right edge at the rectangle's left border
+                top:             8,             // flush with badge bottom (badge spans -8 → +8)
+                width:           panelWidth,    // clamped to viewport by useLayoutEffect
+                height:          150,
+                background:      'rgba(255,255,255,0.6)',
+                borderLeft:      `6px solid ${badgeColor}`,
+                overflow:        'auto',
+                padding:         '8px 10px',
+                boxSizing:       'border-box',
+                fontSize:        13,
+                lineHeight:      1.55,
+                color:           '#1e2d4a',
+                pointerEvents:   'all',         // allow clicking <a> links inside
+                boxShadow:       '0 2px 8px rgba(0,0,0,0.12)',
+              }}
+            >
+              {renderLinkText(displayLinkText, selectedDocId)}
+            </div>
+          )}
+        </>
+      ) : (
+        /**
+         * EDIT MODE — interactive move + resize handles
+         *
+         * The red handle (top-left) is always rendered so the user can always
+         * grab and move the annotation even when it is not "selected".
+         * Pressing it fires onSelect() to make this annotation active, then
+         * immediately starts a move-drag so the press feels instant.
+         *
+         * The four blue resize handles only appear when isSelected is true.
+         * Each is placed at the mid-point of one edge and starts a directional
+         * drag via startDrag(e, direction).
+         *
+         * All handles set pointerEvents: 'all' (inside the Handle component)
+         * to capture mouse events despite the parent wrapper's pointerEvents: 'none'.
+         * onClick propagation is stopped on each handle so a handle click does
+         * not bubble up to the page wrapper and accidentally trigger handlePageMouseDown.
+         */
+        <>
+          {/* Red move handle — always visible; pressing it selects and moves */}
           <Handle
             cursor="move"
             style={{ left: 0, top: 0, background: '#dc2626' }}
             onMouseDown={e => { onSelect?.(); startDrag(e, 'move'); }}
           />
 
-          {/* Resize handles — only visible when selected */}
+          {/* Resize handles — mid-point of each edge, visible only when selected */}
           {isSelected && (
             <>
               <Handle
