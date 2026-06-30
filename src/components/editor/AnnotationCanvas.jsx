@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useLayoutEffect } from 'react';
+import { createPortal } from 'react-dom';
 
 const HANDLE_SIZE = 12; // px — square handle dimensions
 const MIN_SIZE    = 10; // px — minimum rectangle width / height
@@ -139,15 +140,18 @@ export default function AnnotationCanvas({
   displayLinkText = '',
   // selectedDocId: UUID of the target document; used to build the <a> href.
   selectedDocId   = null,
+  // scrollContainerRef: ref to the viewer's scrollable div. Used to update
+  // the portal panel position as the user scrolls through the document.
+  scrollContainerRef = null,
 }) {
   const canvasRef  = useRef(null);
   const wrapperRef = useRef(null); // ref on the outer positioned div
   const dragRef    = useRef(null);
   const lastPosRef = useRef(null); // tracks final pixel pos during drag
 
-  // Width (px) of the viewMode info panel.  Computed via useLayoutEffect when
-  // the panel first appears so it never overflows the left edge of the viewport.
-  const [panelWidth, setPanelWidth] = useState(350);
+  // Viewport-relative position + width for the portal info panel.
+  // null = panel is not visible.  Updated on open, scroll, and resize.
+  const [panelRect, setPanelRect] = useState(null);
 
   // `dragPos` is only non-null while a drag is in progress.
   const [dragPos, setDragPos] = useState(null);
@@ -160,17 +164,41 @@ export default function AnnotationCanvas({
   const posRef = useRef(pos);
   useEffect(() => { posRef.current = pos; });
 
-  // ── Panel width — computed on first appearance to avoid left-edge overflow ─
-  // The panel is anchored right: 100% (extends leftward from the rectangle).
-  // We measure the rectangle's viewport left offset when the panel opens and
-  // cap the width so the panel never bleeds off the left side of the screen.
+  // ── Portal panel position ─────────────────────────────────────────────────
+  // The info panel is rendered via createPortal to document.body so it escapes
+  // the viewer's overflow:auto clipping and all nested stacking contexts.
+  // We use position:fixed with viewport coordinates derived from wrapperRef.
+  //
+  // computePanelRect measures the wrapper's viewport rect and returns the
+  // fixed-position geometry for the panel:
+  //   • right edge  = annotation left edge (panel extends leftward)
+  //   • top         = annotation top + 8px (flush with badge bottom)
+  //   • width       = min(350, annotation.left - 8)  — never overflows left
+  const computePanelRect = useCallback(() => {
+    if (!wrapperRef.current) return null;
+    const r     = wrapperRef.current.getBoundingClientRect();
+    const width = Math.min(350, Math.max(80, Math.floor(r.left) - 8));
+    return { top: r.top + 8, left: r.left - width, width };
+  }, []);
+
+  // Set position when the panel opens; clear it when it closes.
   useLayoutEffect(() => {
-    if (!viewMode || !isSelected || !wrapperRef.current) return;
-    const rect = wrapperRef.current.getBoundingClientRect();
-    // rect.left = distance from viewport left edge to the rectangle's left edge.
-    // Subtract 8 px for a small breathing margin against the viewport boundary.
-    setPanelWidth(Math.min(350, Math.max(80, Math.floor(rect.left) - 8)));
-  }, [viewMode, isSelected]);
+    if (!viewMode || !isSelected) { setPanelRect(null); return; }
+    setPanelRect(computePanelRect());
+  }, [viewMode, isSelected, computePanelRect]);
+
+  // Keep position in sync while the viewer scrolls or the window resizes.
+  useEffect(() => {
+    if (!viewMode || !isSelected) return;
+    const update = () => setPanelRect(computePanelRect());
+    const scrollEl = scrollContainerRef?.current;
+    scrollEl?.addEventListener('scroll', update, { passive: true });
+    window.addEventListener('resize', update, { passive: true });
+    return () => {
+      scrollEl?.removeEventListener('scroll', update);
+      window.removeEventListener('resize', update);
+    };
+  }, [viewMode, isSelected, scrollContainerRef, computePanelRect]);
 
   // ── Draw dashed rectangle whenever dimensions change ──────────────────────
   useEffect(() => {
@@ -181,13 +209,13 @@ export default function AnnotationCanvas({
     canvas.height = h;
     const ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = 'rgba(255, 160, 50, 0.12)';
+    ctx.fillStyle = viewMode ? 'rgba(255, 160, 50, 0.06)' : 'rgba(255, 160, 50, 0.12)';
     ctx.fillRect(0, 0, w, h);
     ctx.setLineDash([4, 3]);
     ctx.strokeStyle = '#1a56cc';
     ctx.lineWidth   = 1;
     ctx.strokeRect(0.5, 0.5, w - 1, h - 1);
-  }, [pos.w, pos.h]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [pos.w, pos.h, viewMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Handle drag ───────────────────────────────────────────────────────────
   const startDrag = useCallback((e, direction) => {
@@ -311,7 +339,10 @@ export default function AnnotationCanvas({
             onClick={() => onSelect?.()}
           />
 
-          {/* 2. Link-type badge — top-left corner, centered on the corner point */}
+          {/* 2. Link-type badge — top-left corner, centered on the corner point.
+               The badge overflows the wrapper bounds (marginLeft/Top: -8) so the
+               clickable overlay (inset:0) doesn't cover it. Adding pointerEvents
+               and onClick here ensures the full 16×16 badge area is clickable. */}
           <div
             style={{
               position:       'absolute',
@@ -333,35 +364,41 @@ export default function AnnotationCanvas({
               fontWeight:     700,
               lineHeight:     1,
               userSelect:     'none',
-              pointerEvents:  'none',
+              pointerEvents:  'all',
+              cursor:         'pointer',
             }}
+            onClick={() => onSelect?.()}
           >
             {badgeLetter}
           </div>
 
-          {/* 3. Info panel — visible only while this annotation is selected */}
-          {isSelected && (
+          {/* 3. Info panel — rendered via portal to document.body so it escapes
+               the viewer's overflow:auto clipping and any stacking context.
+               Uses position:fixed with viewport coordinates from panelRect. */}
+          {isSelected && panelRect && createPortal(
             <div
               style={{
-                position:        'absolute',
-                right:           '100%',        // right edge at the rectangle's left border
-                top:             8,             // flush with badge bottom (badge spans -8 → +8)
-                width:           panelWidth,    // clamped to viewport by useLayoutEffect
-                height:          150,
-                background:      'rgba(255,255,255,0.6)',
-                borderLeft:      `6px solid ${badgeColor}`,
-                overflow:        'auto',
-                padding:         '8px 10px',
-                boxSizing:       'border-box',
-                fontSize:        13,
-                lineHeight:      1.55,
-                color:           '#1e2d4a',
-                pointerEvents:   'all',         // allow clicking <a> links inside
-                boxShadow:       '0 2px 8px rgba(0,0,0,0.12)',
+                position:      'fixed',
+                top:           panelRect.top,
+                left:          panelRect.left,
+                width:         panelRect.width,
+                height:        150,
+                zIndex:        9999,
+                background:    'rgba(255,255,255,0.6)',
+                borderLeft:    `6px solid ${badgeColor}`,
+                overflow:      'auto',
+                padding:       '8px 10px',
+                boxSizing:     'border-box',
+                fontSize:      13,
+                lineHeight:    1.55,
+                color:         '#1e2d4a',
+                pointerEvents: 'all',
+                boxShadow:     '0 2px 8px rgba(0,0,0,0.12)',
               }}
             >
               {renderLinkText(displayLinkText, selectedDocId)}
-            </div>
+            </div>,
+            document.body
           )}
         </>
       ) : (

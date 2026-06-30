@@ -35,7 +35,8 @@
  *       service has all documents indexed.
  */
 
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, useLayoutEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { I } from '../../../icons';
 import { rasterDocs, rasterPages, linkTypes as linkTypesApi, documentLinks as documentLinksApi } from '../../../services/api';
@@ -63,6 +64,20 @@ const ZOOM_LEVELS = [
 // Temporary: raster service currently only has this document deployed.
 // Replace with `docId` from useParams() once all documents are indexed.
 const RASTER_DOC_ID = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11';
+
+// Converts note text containing {curly brace} segments into React nodes.
+// Segments wrapped in {} become <a> links to the target document (same
+// convention used by vrl-toolbar.js in the public page reader).
+function renderNoteText(text, docId) {
+  if (!text) return null;
+  return text.split(/(\{[^}]+\})/).map((part, i) => {
+    const m = part.match(/^\{([^}]+)\}$/);
+    if (!m) return part || null;
+    return docId
+      ? <a key={i} href={`viewDocument?docId=${docId}`} target="_blank" rel="noreferrer">{m[1]}</a>
+      : m[1];
+  });
+}
 
 export default function PdfLinkEditorPage() {
   const { docId } = useParams();
@@ -375,14 +390,18 @@ export default function PdfLinkEditorPage() {
         }
       });
 
-      // Strip sync — scroll the strip to the topmost visible viewer page.
-      // Skipped when sync is disabled (user on strip) or suppressed (programmatic scroll).
-      if (syncEnabled.current && !suppressSync.current && visibleViewerPages.size > 0) {
+      // Track topmost visible page and sync the strip thumbnail into view.
+      if (visibleViewerPages.size > 0) {
         const topPage = Math.min(...visibleViewerPages);
-        const stripEl = stripSlotRefs.current[topPage - 1];
-        if (stripEl) {
-          // block: 'nearest' avoids scrolling the strip when the slot is already visible
-          stripEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        // Always keep currentViewPage in sync for the notes panel (0-based).
+        setCurrentViewPage(prev => prev === topPage - 1 ? prev : topPage - 1);
+        // Strip sync — skipped when sync is disabled or suppressed.
+        if (syncEnabled.current && !suppressSync.current) {
+          const stripEl = stripSlotRefs.current[topPage - 1];
+          if (stripEl) {
+            // block: 'nearest' avoids scrolling the strip when the slot is already visible
+            stripEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          }
         }
       }
 
@@ -427,6 +446,27 @@ export default function PdfLinkEditorPage() {
   const pageWidth  = Math.round(BASE_PAGE_WIDTH * zoom);
   const pageHeight = Math.round(1123 * zoom);
   const pages      = pageCount ? Array.from({ length: pageCount }, (_, i) => i + 1) : [];
+
+  // ── Notes panel ──────────────────────────────────────────────────────────
+  // `isNotesOpen` toggles the right-anchored page-notes panel.
+  // `currentViewPage` (0-based) tracks the topmost visible page in the viewer;
+  //  updated by the IntersectionObserver in Effect 3.
+  // `toolbarBottom` is the viewport y of the viewer toolbar's bottom edge,
+  //  measured via a ResizeObserver so the notes panel top stays aligned.
+  const [isNotesOpen,      setIsNotesOpen]      = useState(false);
+  const [currentViewPage,  setCurrentViewPage]  = useState(0);
+  const [toolbarBottom,    setToolbarBottom]    = useState(92); // fallback ≈ header(48)+toolbar(44)
+  const viewerToolbarRef = useRef(null);
+
+  useLayoutEffect(() => {
+    const el = viewerToolbarRef.current;
+    if (!el) return;
+    const update = () => setToolbarBottom(el.getBoundingClientRect().bottom);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   // ── View / edit mode ─────────────────────────────────────────────────────
   // Toggled by the linkEditMode / linkViewMode icon button in the toolbar.
@@ -583,6 +623,12 @@ export default function PdfLinkEditorPage() {
       )
       .sort((a, b) => a.pageIndex - b.pageIndex || a.y - b.y || a.x - b.x),
   [annotations]);
+
+  // Sorted list of 0-based page indices that have at least one annotation.
+  // Used by the notes panel page navigator to show only relevant pages.
+  const pagesWithNotes = useMemo(() =>
+    [...new Set(sortedSpots.map(s => s.pageIndex))].sort((a, b) => a - b),
+  [sortedSpots]);
 
   // Index of the currently selected annotation within sortedSpots (-1 = none).
   const currentSpotIndex = useMemo(
@@ -771,7 +817,7 @@ export default function PdfLinkEditorPage() {
       <main className="flex-1 flex flex-col overflow-hidden" style={{ background: 'rgb(250, 249, 245)' }}>
 
         {/* Toolbar */}
-        <div className="shrink-0 flex items-center gap-1 px-4 py-2 bg-white border-b border-slate-200">
+        <div ref={viewerToolbarRef} className="shrink-0 flex items-center gap-1 px-4 py-2 bg-white border-b border-slate-200">
           <button
             onClick={handleGoBack}
             title="Go back to the document"
@@ -817,6 +863,19 @@ export default function PdfLinkEditorPage() {
               }`}
           >
             {isViewMode ? <I.linkViewMode size={18} /> : <I.linkEditMode size={18} />}
+          </button>
+
+          {/* Notes panel toggle — shows all annotations for the current page */}
+          <button
+            onClick={() => setIsNotesOpen(v => !v)}
+            title={isNotesOpen ? 'Close notes panel' : 'Open notes panel'}
+            className={`w-8 h-8 rounded flex items-center justify-center transition-colors
+              ${isNotesOpen
+                ? 'bg-[#1e2d4a] text-white'
+                : 'text-slate-500 hover:bg-slate-100 hover:text-[#1e2d4a]'
+              }`}
+          >
+            <I.notebookTabs size={18} />
           </button>
         </div>
 
@@ -905,6 +964,7 @@ export default function PdfLinkEditorPage() {
                         badgeLetter={badgeLetter}
                         displayLinkText={displayLinkText}
                         selectedDocId={spotDocId}
+                        scrollContainerRef={viewerScrollRef}
                       />
                     );
                   })}
@@ -932,6 +992,182 @@ export default function PdfLinkEditorPage() {
         </div>
 
       </main>
+
+      {/* ── Notes panel — right-anchored, shows all annotations for the current page ── */}
+      {isNotesOpen && createPortal(
+        (() => {
+          // Notes for the page currently visible at the top of the viewer (0-based index).
+          const pageNotes = sortedSpots.filter(s => s.pageIndex === currentViewPage);
+          return (
+            <div
+              style={{
+                position:          'fixed',
+                top:               toolbarBottom,
+                right:             0,
+                bottom:            0,
+                width:             500,
+                zIndex:            10000,
+                display:           'flex',
+                flexDirection:     'column',
+                background:        'rgba(255,255,255,0.40)',
+                backdropFilter:    'blur(12px)',
+                WebkitBackdropFilter: 'blur(12px)',
+                borderLeft:        '1px solid rgba(0,0,0,0.08)',
+                boxShadow:         '-8px 0 32px rgba(0,0,0,0.06)',
+              }}
+            >
+              {/* Header */}
+              <div style={{
+                display:        'flex',
+                alignItems:     'center',
+                gap:            8,
+                padding:        '6px 12px 6px 8px',
+                borderBottom:   '1px solid rgba(0,0,0,0.08)',
+                flexShrink:     0,
+              }}>
+                <button
+                  onClick={() => setIsNotesOpen(false)}
+                  title="Close notes panel"
+                  style={{
+                    display:         'flex',
+                    alignItems:      'center',
+                    justifyContent:  'center',
+                    width:           28,
+                    height:          28,
+                    borderRadius:    6,
+                    border:          'none',
+                    background:      'transparent',
+                    cursor:          'pointer',
+                    color:           '#64748b',
+                    flexShrink:      0,
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.background = 'rgba(0,0,0,0.06)'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                >
+                  <I.x size={16} />
+                </button>
+                <span style={{ fontSize: 12, fontWeight: 600, color: '#1e2d4a', letterSpacing: '0.02em' }}>
+                  Notes — page {currentViewPage + 1}
+                </span>
+                <span style={{ fontSize: 11, color: '#94a3b8', marginLeft: 'auto' }}>
+                  {pageNotes.length} {pageNotes.length === 1 ? 'note' : 'notes'}
+                </span>
+              </div>
+
+              {/* Page navigator — only pages that contain at least one link */}
+              {pagesWithNotes.length > 1 && (
+                <div style={{
+                  display:      'flex',
+                  alignItems:   'center',
+                  gap:          4,
+                  padding:      '5px 12px',
+                  borderBottom: '1px solid rgba(0,0,0,0.06)',
+                  flexShrink:   0,
+                  overflowX:    'auto',
+                  scrollbarWidth: 'none',
+                }}>
+                  {pagesWithNotes.map(pageIdx => {
+                    const isCurrentPage = pageIdx === currentViewPage;
+                    return (
+                      <button
+                        key={pageIdx}
+                        onClick={() => pageRefs.current[pageIdx]?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                        title={`Go to page ${pageIdx + 1}`}
+                        style={{
+                          flexShrink:      0,
+                          minWidth:        24,
+                          height:          20,
+                          padding:         '0 5px',
+                          borderRadius:    4,
+                          border:          isCurrentPage ? 'none' : '1px solid rgba(0,0,0,0.12)',
+                          background:      isCurrentPage ? '#1e2d4a' : 'transparent',
+                          color:           isCurrentPage ? '#fff' : '#64748b',
+                          fontSize:        10,
+                          fontWeight:      isCurrentPage ? 600 : 400,
+                          cursor:          'pointer',
+                          lineHeight:      1,
+                          transition:      'all 0.12s',
+                        }}
+                        onMouseEnter={e => { if (!isCurrentPage) e.currentTarget.style.background = 'rgba(0,0,0,0.06)'; }}
+                        onMouseLeave={e => { if (!isCurrentPage) e.currentTarget.style.background = 'transparent'; }}
+                      >
+                        {pageIdx + 1}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Note list */}
+              <div style={{ flex: 1, overflowY: 'auto', padding: '6px 0' }}>
+                {pageNotes.length === 0 && (
+                  <p style={{ padding: '16px 16px', fontSize: 13, color: '#94a3b8', margin: 0 }}>
+                    No notes on this page.
+                  </p>
+                )}
+                {pageNotes.map((spot, idx) => {
+                  const linkTypeId      = spotLinkTypes[spot.id];
+                  const lt              = linkTypeId ? linkTypesList.find(l => String(l.id) === String(linkTypeId)) : null;
+                  const borderColor     = lt?.color ? `#${lt.color}` : '#dc2626';
+                  const displayData     = spotDisplayData[spot.id] ?? {};
+                  const noteText        = displayData.displayLinkText || '';
+                  const noteDocId       = displayData.selectedDocId   || null;
+                  const isActive        = selectedAnnId === spot.id;
+                  return (
+                    <div
+                      key={spot.id}
+                      onClick={() => {
+                        setSelectedAnnId(spot.id);
+                        pageRefs.current[spot.pageIndex]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                      }}
+                      style={{
+                        display:       'flex',
+                        alignItems:    'flex-start',
+                        gap:           10,
+                        padding:       '8px 14px 8px 0',
+                        marginBottom:  2,
+                        cursor:        'pointer',
+                        background:    isActive ? 'rgba(30,45,74,0.06)' : 'transparent',
+                        transition:    'background 0.12s',
+                      }}
+                      onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = 'rgba(0,0,0,0.03)'; }}
+                      onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = 'transparent'; }}
+                    >
+                      {/* Ordinal number */}
+                      <span style={{
+                        flexShrink:  0,
+                        width:       32,
+                        textAlign:   'right',
+                        fontSize:    11,
+                        color:       '#94a3b8',
+                        paddingTop:  2,
+                      }}>
+                        {idx + 1}
+                      </span>
+                      {/* Colored left border + note text */}
+                      <div style={{
+                        flex:        1,
+                        borderLeft:  `6px solid ${borderColor}`,
+                        paddingLeft: 10,
+                        fontSize:    13,
+                        lineHeight:  1.55,
+                        color:       '#1e2d4a',
+                        minHeight:   24,
+                      }}>
+                        {noteText
+                          ? renderNoteText(noteText, noteDocId)
+                          : <span style={{ color: '#94a3b8', fontStyle: 'italic' }}>No text</span>
+                        }
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })(),
+        document.body
+      )}
 
       <VrlToolbar
         spots={sortedSpots}
