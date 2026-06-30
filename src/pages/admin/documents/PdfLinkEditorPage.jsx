@@ -436,49 +436,50 @@ export default function PdfLinkEditorPage() {
   // on mount so the link panel shows pre-saved values for existing annotations.
   const [initialLinkData,  setInitialLinkData]  = useState([]);
 
-  // Load existing document links when the document ID is available.
-  // Each record contains position data (page, page_xpos/ypos/width/height) that
-  // lets us reconstruct the annotation rectangles, plus the full link form state.
-  // The `page` field is treated as 0-based to match annotations[pageIndex].
+  // Load existing document links and reconstruct annotation rectangles exactly
+  // as if the user had shift-clicked each one. Each link's position fields
+  // (page, page_xpos/ypos/width/height) drive the same setAnnotations setter
+  // that handlePageClick uses, so the AnnotationCanvas components mount the
+  // same way they would for user-placed annotations.
+  // `page` is treated as 0-based to match the loop index in the render.
+  // Change to (link.page - 1) if the API returns 1-based page numbers.
   useEffect(() => {
     if (!docId) return;
     documentLinksApi.list(docId)
       .then(links => {
         if (!Array.isArray(links) || !links.length) return;
-        const newAnnotations = {};
-        const newLinkData    = [];
+        const newLinkData = [];
         links.forEach(link => {
           const spotId    = crypto.randomUUID();
-          const pageIndex = link.page; // 0-based; change to (link.page - 1) if API uses 1-based
-          if (!newAnnotations[pageIndex]) newAnnotations[pageIndex] = [];
-          newAnnotations[pageIndex].push({
-            id: spotId,
-            x:  link.page_xpos,
-            y:  link.page_ypos,
-            w:  link.page_width,
-            h:  link.page_height,
-          });
+          const pageIndex = link.page;
+          // Same functional-update pattern as handlePageClick so the canvas mounts.
+          setAnnotations(prev => ({
+            ...prev,
+            [pageIndex]: [
+              ...(prev[pageIndex] ?? []),
+              { id: spotId, x: link.page_xpos, y: link.page_ypos, w: link.page_width, h: link.page_height },
+            ],
+          }));
           newLinkData.push({
             spotId,
             linkDocumentId: link.id,
             formState: {
-              linkTypeId:         link.link_type_id             ?? '',
-              linkSide:           link.link_side === 'A'        ? 'active'    : 'passive',
-              linkGender:         link.target_document_gender === 'M' ? 'masculine' : 'feminine',
-              articleToggle:      link.specific_article         ?? false,
-              articleText:        link.target_article_text      ?? '',
-              articleAnchor:      link.target_article_anchor    ?? '',
-              linkText:           link.link_text                ?? '',
-              // Treat a non-empty saved link_text as manually set so it displays as-is.
+              linkTypeId:         link.link_type_id                    ?? '',
+              linkSide:           link.link_side === 'A'               ? 'active'    : 'passive',
+              linkGender:         link.target_document_gender === 'M'  ? 'masculine' : 'feminine',
+              articleToggle:      link.specific_article                ?? false,
+              articleText:        link.target_article_text             ?? '',
+              articleAnchor:      link.target_article_anchor           ?? '',
+              linkText:           link.link_text                       ?? '',
+              // Non-empty saved text is treated as user-edited so it displays as-is.
               linkTextUserEdited: !!link.link_text,
-              selectedDocId:      link.target_document_id       ?? null,
-              // selectedDocName is not returned by this endpoint; the computed
-              // link text will fall back to the saved link_text above.
+              selectedDocId:      link.target_document_id              ?? null,
+              // selectedDocName is not in this response; computed link text falls
+              // back to the saved link_text when selectedDocName is null.
               selectedDocName:    null,
             },
           });
         });
-        setAnnotations(newAnnotations);
         setInitialLinkData(newLinkData);
       })
       .catch(err => console.error('Failed to load document links:', err));
