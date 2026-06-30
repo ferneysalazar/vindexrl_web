@@ -567,17 +567,18 @@ export default function PdfLinkEditorPage() {
             });
 
             const fs = {
-              linkTypeId:         link.link_type_id                    ?? '',
-              linkSide:           link.link_side === 'A'               ? 'active'    : 'passive',
-              linkGender:         link.target_document_gender === 'M'  ? 'masculine' : 'feminine',
-              articleToggle:      link.specific_article                ?? false,
-              articleText:        link.target_article_text             ?? '',
-              articleAnchor:      link.target_article_anchor           ?? '',
-              linkText:           link.link_text                       ?? '',
-              linkTextUserEdited: !!link.link_text,
-              selectedDocId:      link.target_document_id              ?? null,
+              linkTypeId:           link.link_type_id                    ?? '',
+              linkSide:             link.link_side === 'A'               ? 'active'    : 'passive',
+              linkGender:           link.target_document_gender === 'M'  ? 'masculine' : 'feminine',
+              articleToggle:        link.specific_article                ?? false,
+              articleText:          link.target_article_text             ?? '',
+              articleAnchor:        link.target_article_anchor           ?? '',
+              targetDocumentType:   link.target_document_type            ?? 'pdf',
+              linkText:             link.link_text                       ?? '',
+              linkTextUserEdited:   !!link.link_text,
+              selectedDocId:        link.target_document_id              ?? null,
               // selectedDocName not in this response; falls back to saved link_text.
-              selectedDocName:    null,
+              selectedDocName:      null,
             };
 
             newLinkData.push({ spotId, linkDocumentId: link.id, formState: fs });

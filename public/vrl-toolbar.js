@@ -897,10 +897,19 @@
             <span class="vrl-link-text-label">Article anchor</span>
             <input class="vrl-link-article-input" id="vrlArticleAnchor" type="text" placeholder="Article anchor…" />
           </div>
+          <span class="vrl-link-text-label">Target Document Type</span>
+          <div class="vrl-link-side-group">
+            <label class="vrl-link-side-label">
+              <input type="radio" name="vrlTargetDocumentType" value="pdf" checked /> PDF
+            </label>
+            <label class="vrl-link-side-label">
+              <input type="radio" name="vrlTargetDocumentType" value="html" /> HTML
+            </label>
+          </div>
           <span class="vrl-link-text-label">Link Text</span>
           <div class="vrl-link-text-wrapper">
             <textarea class="vrl-link-text-area" id="vrlLinkText" rows="2"></textarea>
-            <button class="vrl-link-text-reset" id="vrlLinkTextReset" data-tooltip="Reset to calculated value">
+            <button class="vrl-link-text-reset" id="vrlLinkTextReset" data-tooltip="Reset to calculated text">
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
             </button>
           </div>
@@ -1213,13 +1222,14 @@
 
     function captureFormState() {
       return {
-        linkTypeId:         document.getElementById('vrlLinkTypeSelect').value,
-        linkSide:           document.querySelector('input[name="vrlLinkSide"]:checked')?.value || 'active',
-        linkGender:         document.querySelector('input[name="vrlLinkGender"]:checked')?.value || 'feminine',
-        articleToggle:      document.getElementById('vrlArticleToggle').checked,
-        articleText:        document.getElementById('vrlArticleText').value,
-        articleAnchor:      document.getElementById('vrlArticleAnchor').value,
-        linkText:           document.getElementById('vrlLinkText').value,
+        linkTypeId:           document.getElementById('vrlLinkTypeSelect').value,
+        linkSide:             document.querySelector('input[name="vrlLinkSide"]:checked')?.value || 'active',
+        linkGender:           document.querySelector('input[name="vrlLinkGender"]:checked')?.value || 'feminine',
+        articleToggle:        document.getElementById('vrlArticleToggle').checked,
+        articleText:          document.getElementById('vrlArticleText').value,
+        articleAnchor:        document.getElementById('vrlArticleAnchor').value,
+        targetDocumentType:   document.querySelector('input[name="vrlTargetDocumentType"]:checked')?.value || 'pdf',
+        linkText:             document.getElementById('vrlLinkText').value,
         linkTextUserEdited,
         selectedDocId,
         selectedDocName,
@@ -1261,6 +1271,8 @@
       document.getElementById('vrlArticleFields').classList.remove('vrl-visible');
       document.getElementById('vrlArticleText').value = '';
       document.getElementById('vrlArticleAnchor').value = '';
+      const defaultDocTypeEl = document.querySelector('input[name="vrlTargetDocumentType"][value="pdf"]');
+      if (defaultDocTypeEl) defaultDocTypeEl.checked = true;
       document.getElementById('vrlLinkText').value = '';
       linkTextUserEdited = false;
       selectedDocId   = null;
@@ -1278,6 +1290,8 @@
       document.getElementById('vrlArticleFields').classList.toggle('vrl-visible', !!state.articleToggle);
       document.getElementById('vrlArticleText').value   = state.articleText   || '';
       document.getElementById('vrlArticleAnchor').value = state.articleAnchor || '';
+      const docTypeEl = document.querySelector(`input[name="vrlTargetDocumentType"][value="${state.targetDocumentType || 'pdf'}"]`);
+      if (docTypeEl) docTypeEl.checked = true;
       document.getElementById('vrlLinkText').value      = state.linkText      || '';
       linkTextUserEdited = !!state.linkTextUserEdited;
       selectedDocId      = state.selectedDocId   || null;
@@ -1551,6 +1565,7 @@
         specific_article: articleChecked,
         target_article_text: articleChecked ? (document.getElementById('vrlArticleText').value.trim() || null) : null,
         target_article_anchor: articleChecked ? (document.getElementById('vrlArticleAnchor').value.trim() || null) : null,
+        target_document_type: document.querySelector('input[name="vrlTargetDocumentType"]:checked')?.value || 'pdf',
         link_text: document.getElementById('vrlLinkText').value.trim() || null,
       };
 

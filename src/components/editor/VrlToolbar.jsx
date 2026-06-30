@@ -91,16 +91,17 @@ function ResetIcon() {
 // ── Per-spot form defaults ────────────────────────────────────────────────────
 
 const DEFAULT_FORM = {
-  linkTypeId:         '',
-  linkSide:           'active',
-  linkGender:         'feminine',
-  articleToggle:      false,
-  articleText:        '',
-  articleAnchor:      '',
-  linkText:           '',       // only used when linkTextUserEdited === true
-  linkTextUserEdited: false,
-  selectedDocId:      null,
-  selectedDocName:    null,
+  linkTypeId:           '',
+  linkSide:             'active',
+  linkGender:           'feminine',
+  articleToggle:        false,
+  articleText:          '',
+  articleAnchor:        '',
+  targetDocumentType:   'pdf',
+  linkText:             '',       // only used when linkTextUserEdited === true
+  linkTextUserEdited:   false,
+  selectedDocId:        null,
+  selectedDocName:      null,
 };
 
 // ── Spots navigator ───────────────────────────────────────────────────────────
@@ -186,7 +187,7 @@ function LinkPropsForm({
   onSave,
   onDrop,
 }) {
-  const { linkTypeId, linkSide, linkGender, articleToggle, articleText, articleAnchor, selectedDocId } = formState;
+  const { linkTypeId, linkSide, linkGender, articleToggle, articleText, articleAnchor, targetDocumentType, selectedDocId } = formState;
 
   // Save is only valid when both a link type and non-empty link text are present.
   const canSave = !!linkTypeId && !!displayLinkText.trim();
@@ -281,6 +282,22 @@ function LinkPropsForm({
         </div>
       )}
 
+      <span className="vrl-link-text-label">Target Document Type</span>
+      <div className="vrl-link-side-group">
+        {['pdf', 'html'].map(type => (
+          <label key={type} className="vrl-link-side-label">
+            <input
+              type="radio"
+              name={`targetDocumentType-${spotId}`}
+              value={type}
+              checked={targetDocumentType === type}
+              onChange={() => onChange({ targetDocumentType: type })}
+            />
+            {type.toUpperCase()}
+          </label>
+        ))}
+      </div>
+
       <span className="vrl-link-text-label">Link Text</span>
       <div className="vrl-link-text-wrapper">
         <textarea
@@ -291,7 +308,7 @@ function LinkPropsForm({
         />
         <button
           className="vrl-link-text-reset"
-          data-tooltip="Reset to calculated value"
+          data-tooltip="Reset to calculated text"
           onClick={() => onChange({ linkTextUserEdited: false, linkText: '' })}
         >
           <ResetIcon />
@@ -699,6 +716,7 @@ export default function VrlToolbar({
       specific_article:       formState.articleToggle,
       target_article_text:    formState.articleToggle ? (formState.articleText.trim()   || null) : null,
       target_article_anchor:  formState.articleToggle ? (formState.articleAnchor.trim() || null) : null,
+      target_document_type:   formState.targetDocumentType ?? 'pdf',
       link_text:              displayLinkText.trim() || null,
       page:        spotData?.pageIndex ?? null,
       page_xpos:   spotData?.x        ?? null,
