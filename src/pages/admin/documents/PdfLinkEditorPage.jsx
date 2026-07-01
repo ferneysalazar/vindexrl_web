@@ -507,6 +507,10 @@ export default function PdfLinkEditorPage() {
   // Ghost rect shown while the user is shift-dragging to draw a new annotation.
   // { pageIndex, x, y, w, h } in pixels relative to the page, or null.
   const [drawingRect,      setDrawingRect]      = useState(null);
+  // True while VrlToolbar has unsaved changes on the active link. While
+  // dirty, the user must Save/Update/Cancel before creating a new rectangle
+  // or selecting a different one — otherwise in-progress edits are silently lost.
+  const [isLinkDirty,      setIsLinkDirty]      = useState(false);
 
   // ── spotId → display data for the viewMode info panel ────────────────────
   // { [spotId]: { displayLinkText: string, selectedDocId: string|null } }
@@ -604,11 +608,21 @@ export default function PdfLinkEditorPage() {
   // Deselects all annotations. Also wired to Escape key; call programmatically when needed.
   const deselectAll = useCallback(() => setSelectedAnnId(null), [setSelectedAnnId]);
 
+  // Selects a different annotation, unless the active link has unsaved
+  // changes — in that case the switch is ignored until the user saves,
+  // updates, or cancels. Re-selecting the already-active spot is always allowed.
+  const trySelectAnn = useCallback((id) => {
+    if (isLinkDirty && id !== selectedAnnId) return;
+    setSelectedAnnId(id);
+  }, [isLinkDirty, selectedAnnId, setSelectedAnnId]);
+
   useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape') deselectAll(); };
+    // Escape must not bypass the dirty-link guard — otherwise it would
+    // silently discard unsaved link edits instead of requiring Save/Cancel.
+    const onKey = (e) => { if (e.key === 'Escape' && !isLinkDirty) deselectAll(); };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [deselectAll]);
+  }, [deselectAll, isLinkDirty]);
 
   // ── Spots navigator ───────────────────────────────────────────────────────
   // Flatten all annotations across pages into a single array sorted by
@@ -636,9 +650,10 @@ export default function PdfLinkEditorPage() {
   const handleNavigate = useCallback((index) => {
     const spot = sortedSpots[index];
     if (!spot) return;
+    if (isLinkDirty && spot.id !== selectedAnnId) return;
     setSelectedAnnId(spot.id);
     pageRefs.current[spot.pageIndex]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  }, [sortedSpots]);
+  }, [sortedSpots, isLinkDirty, selectedAnnId]);
 
   /**
    * handleSpotLinkTypeChange — called by VrlToolbar whenever the user changes
@@ -715,6 +730,9 @@ export default function PdfLinkEditorPage() {
   const handlePageMouseDown = useCallback((e, pageIndex) => {
     // Blocked in viewMode — annotations cannot be created while reviewing.
     if (isViewMode) return;
+    // Blocked while another link has unsaved changes — the user must
+    // Save/Update/Cancel it before starting a new rectangle.
+    if (isLinkDirty) return;
     // Only activate on Shift+mousedown to avoid interfering with normal clicks.
     if (!e.shiftKey) return;
     // Prevent the browser from extending a text selection on Shift+click.
@@ -786,7 +804,7 @@ export default function PdfLinkEditorPage() {
 
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup',   onUp);
-  }, [isViewMode, pageWidth, pageHeight, setAnnotations, setSelectedAnnId]);
+  }, [isViewMode, isLinkDirty, pageWidth, pageHeight, setAnnotations, setSelectedAnnId]);
 
   // Updates the stored percentage values for one annotation after a drag/resize.
   const handleAnnotationChange = useCallback((pageIndex, id, pct) => {
@@ -978,7 +996,8 @@ export default function PdfLinkEditorPage() {
                         pageWidth={pageWidth}
                         pageHeight={pageHeight}
                         isSelected={selectedAnnId === ann.id}
-                        onSelect={() => setSelectedAnnId(ann.id)}
+                        onSelect={() => trySelectAnn(ann.id)}
+                        locked={isLinkDirty && selectedAnnId !== ann.id}
                         onChange={pct => handleAnnotationChange(i, ann.id, pct)}
                         viewMode={isViewMode}
                         badgeColor={badgeColor}
@@ -1096,7 +1115,7 @@ export default function PdfLinkEditorPage() {
                         title={`Go to page ${pageIdx + 1}`}
                         style={{
                           flexShrink:      0,
-                          minWidth:        24,
+                          minWidth:        32,
                           height:          20,
                           padding:         '0 5px',
                           borderRadius:    4,
@@ -1112,7 +1131,7 @@ export default function PdfLinkEditorPage() {
                         onMouseEnter={e => { if (!isCurrentPage) e.currentTarget.style.background = 'rgba(0,0,0,0.06)'; }}
                         onMouseLeave={e => { if (!isCurrentPage) e.currentTarget.style.background = 'transparent'; }}
                       >
-                        {pageIdx + 1}
+                        P-{pageIdx + 1}
                       </button>
                     );
                   })}
@@ -1138,6 +1157,7 @@ export default function PdfLinkEditorPage() {
                     <div
                       key={spot.id}
                       onClick={() => {
+                        if (isLinkDirty && spot.id !== selectedAnnId) return;
                         setSelectedAnnId(spot.id);
                         pageRefs.current[spot.pageIndex]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
                       }}
@@ -1199,6 +1219,7 @@ export default function PdfLinkEditorPage() {
         onSpotLinkTypeChange={handleSpotLinkTypeChange}
         onSpotDataChange={handleSpotDataChange}
         onDropSpot={handleDropSpot}
+        onDirtyChange={setIsLinkDirty}
       />
     </>
   );

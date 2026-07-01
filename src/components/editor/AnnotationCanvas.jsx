@@ -144,6 +144,10 @@ export default function AnnotationCanvas({
   // scrollContainerRef: ref to the viewer's scrollable div. Used to update
   // the portal panel position as the user scrolls through the document.
   scrollContainerRef = null,
+  // locked: true when another spot has unsaved link changes in progress.
+  // Disables the move handle so this (non-active) rectangle can't be
+  // selected or dragged until the dirty link is saved/cancelled.
+  locked = false,
 }) {
   const canvasRef  = useRef(null);
   const wrapperRef = useRef(null); // ref on the outer positioned div
@@ -421,11 +425,12 @@ export default function AnnotationCanvas({
          * not bubble up to the page wrapper and accidentally trigger handlePageMouseDown.
          */
         <>
-          {/* Red move handle — always visible; pressing it selects and moves */}
+          {/* Red move handle — always visible; pressing it selects and moves.
+              Disabled while locked (a different spot has unsaved changes). */}
           <Handle
-            cursor="move"
-            style={{ left: 0, top: 0, background: '#dc2626' }}
-            onMouseDown={e => { onSelect?.(); startDrag(e, 'move'); }}
+            cursor={locked ? 'not-allowed' : 'move'}
+            style={{ left: 0, top: 0, background: '#dc2626', opacity: locked ? 0.4 : 1 }}
+            onMouseDown={e => { if (locked) return; onSelect?.(); startDrag(e, 'move'); }}
           />
 
           {/* Resize handles — mid-point of each edge, visible only when selected */}

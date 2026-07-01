@@ -525,6 +525,16 @@ export default function VrlToolbar({
    * rectangle and its associated state for `spotId`.
    */
   onDropSpot,
+  /**
+   * onDirtyChange(isDirty)
+   *
+   * Optional callback fired whenever the current spot's dirty state changes.
+   * The parent (PdfLinkEditorPage) uses this to block creating a new
+   * annotation rectangle or selecting a different one while there are
+   * unsaved changes on the active link — the user must Save/Update/Cancel
+   * first.
+   */
+  onDirtyChange,
 }) {
   // ── Link types (fetched once on mount) ───────────────────────────────────
   const [linkTypesList, setLinkTypesList] = useState([]);
@@ -606,6 +616,12 @@ export default function VrlToolbar({
     // Record this as the baseline so cancel can restore to it.
     if (currentSpotId) baselineStoreRef.current[currentSpotId] = next;
   }, [currentSpotId]);
+
+  // Notify the parent whenever the dirty flag changes so it can gate
+  // rectangle creation / selection elsewhere on the page.
+  useEffect(() => {
+    onDirtyChange?.(isDirty);
+  }, [isDirty, onDirtyChange]);
 
   // ── Computed link text ───────────────────────────────────────────────────
   // Auto-built from link type, gender, article, and selected document name.
