@@ -36,6 +36,20 @@ All notable changes to this project are documented here.
 
 ---
 
+## 2026-07-01
+
+### Added
+- **Dirty-link guard** (`PdfLinkEditorPage.jsx`, `AnnotationCanvas.jsx`, `VrlToolbar.jsx`) — while the active link's form has unsaved changes, the user can no longer create a new annotation rectangle (Shift+drag), select a different rectangle (canvas handle, notes-panel row, spots-navigator arrows/list), or deselect via Escape. `VrlToolbar` reports its `isDirty` state upward via a new `onDirtyChange` callback; `PdfLinkEditorPage` tracks it as `isLinkDirty` and gates every selection/creation entry point on it. Non-active rectangles are visually dimmed (40% opacity, `not-allowed` cursor) via a new `locked` prop on `AnnotationCanvas`. Resolved by Save, Update, Cancel, or Drop.
+- **"Go to the related document" button** (`VrlToolbar.jsx`) — added to `LinkPropsForm` under the Target ID row; navigates (same tab, via `useNavigate`) to the target document's own `pdf-link-editor` route, carrying the current link's full record (`originalSideLinkInfo`: spot id, source/target document ids, link type/side/gender, article fields, target document type, link text) as router state. Disabled unless a target document is selected and the form is clean.
+- **Arrival banner** (`PdfLinkEditorPage.jsx`) — when a document is opened via "Go to the related document", `originalSideLinkInfo` is read once from `location.state`, then stripped from the history entry (`replace: true`) so a refresh doesn't reapply it. A dismissible banner under the toolbar shows which document/link the user arrived from.
+- **Notes panel page buttons prefixed with "P-"** (`PdfLinkEditorPage.jsx`) — the page-jump buttons in the notes panel's page navigator now read "P-1", "P-2", etc. to make clear the number is a page, not a note index.
+- **Comprehensive inline documentation** for `PdfLinkEditorPage.jsx` and `VrlToolbar.jsx` — component/sub-component docblocks (`SpotsNavigator`, `LinkPropsForm`, `DocSearchPanel`, `SaveConfirmModal`), per-field explanations in the link properties form, and comments on previously-uncommented state, render blocks, and handlers.
+
+### Fixed
+- **Raster doc id hardcoding** (`PdfLinkEditorPage.jsx`) — removed the temporary `RASTER_DOC_ID` constant; all `rasterDocs`/`rasterPages` calls now use the route's `docId` param, so switching documents (via "Go to the related document" or the browser Back/Forward buttons — the route element isn't remounted on a param-only change) reloads that document's own pages instead of continuing to show whatever was previously loaded. The page-count effect now depends on `docId` and fully resets all per-document bookkeeping (blob URLs, strip/viewer load sets, hi-res sets, reading timers) on every document switch.
+
+---
+
 ## 2026-06-21
 
 ### Added

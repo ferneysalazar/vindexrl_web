@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { xdocuments, linkTypes as linkTypesApi, documentLinks as documentLinksApi } from '../../services/api';
 import './VrlToolbar.css';
 
@@ -88,8 +89,23 @@ function ResetIcon() {
   );
 }
 
+// Simple right-arrow used on the "Go to the related document" button.
+function GoToIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="5" y1="12" x2="19" y2="12" />
+      <polyline points="12 5 19 12 12 19" />
+    </svg>
+  );
+}
+
 // ── Per-spot form defaults ────────────────────────────────────────────────────
 
+// Shape of the editable state for one annotation's link record — the value
+// type of linkPropsStoreRef/baselineStoreRef (keyed by spotId) and of the
+// `formState` used by LinkPropsForm. Also mirrors the fields VrlToolbar sends
+// to the backend in handleLinkPropsSave and forwards to the target document
+// in handleGoToRelated's `originalSideLinkInfo`.
 const DEFAULT_FORM = {
   linkTypeId:           '',
   linkSide:             'active',
@@ -106,6 +122,24 @@ const DEFAULT_FORM = {
 
 // ── Spots navigator ───────────────────────────────────────────────────────────
 
+/**
+ * SpotsNavigator — prev/next arrows + a numbered strip for jumping directly
+ * to any annotation spot, plus the chevron that expands/collapses LinkPropsForm.
+ *
+ * Props:
+ *   spots              — full spot list (only its length matters here; items
+ *                         themselves are addressed by index via onNavigate).
+ *   currentSpotIndex    — index of the active spot in `spots` (-1 = none).
+ *   isDirty             — when true, every nav control except the current spot
+ *                         is disabled — the user must resolve the dirty link
+ *                         (Save/Update/Cancel) before jumping elsewhere.
+ *   onNavigate(index)   — requests selecting the spot at `index`.
+ *   onToggleLinkProps() — expands/collapses LinkPropsForm below this bar.
+ *   linkPropsExpanded   — current expand state, used only to orient the chevron.
+ *
+ * When there are more than 7 spots, the strip collapses to first-3 / … / last-3
+ * (navItems) instead of listing every index, keeping the toolbar a fixed width.
+ */
 function SpotsNavigator({ spots, currentSpotIndex, isDirty, onNavigate, onToggleLinkProps, linkPropsExpanded }) {
   const n = spots.length;
 
@@ -173,6 +207,35 @@ function SpotsNavigator({ spots, currentSpotIndex, isDirty, onNavigate, onToggle
 
 // ── Link properties form ──────────────────────────────────────────────────────
 
+/**
+ * LinkPropsForm — the editable record for a single annotation spot: link
+ * type, active/passive side, target document gender (for Spanish article
+ * agreement), an optional specific-article reference, target document type
+ * (pdf/html), the computed-or-edited link text, and Save/Cancel/Drop/Go-to
+ * actions.
+ *
+ * This component is purely presentational + local derivations (canSave,
+ * saveLabel, isCreation) — all persistence and dirty-tracking live in the
+ * parent VrlToolbar; every field change is reported upward via `onChange`.
+ *
+ * Props:
+ *   spotId              — id of the annotation this form edits, or null.
+ *   linkDocumentId       — backend record id if this link was already saved
+ *                          (creation mode when null/undefined).
+ *   linkTypes            — full link-type list for the dropdown.
+ *   formState             — current field values (see DEFAULT_FORM shape).
+ *   displayLinkText      — computed-or-user-edited text shown in the textarea.
+ *   onChange(patch)      — merge `patch` into formState (marks dirty).
+ *   onArticleTextBlur()  — auto-fills the article anchor from the article text.
+ *   isDirty              — whether formState differs from the saved baseline.
+ *   saveLinkStatus       — 'idle' | 'saving' | 'saved' | 'error', drives the
+ *                          Save button's label/style.
+ *   onCancel()           — update mode: restore the baseline (only when dirty).
+ *   onSave()             — POST (create) or PUT (update) the link document.
+ *   onDrop()             — delete the backend record (if any) and the spot.
+ *   onGoToRelated()      — navigate to the target document's own editor,
+ *                          carrying this link's full context with it.
+ */
 function LinkPropsForm({
   spotId,
   linkDocumentId,
@@ -186,6 +249,7 @@ function LinkPropsForm({
   onCancel,
   onSave,
   onDrop,
+  onGoToRelated,
 }) {
   const { linkTypeId, linkSide, linkGender, articleToggle, articleText, articleAnchor, targetDocumentType, selectedDocId } = formState;
 
@@ -210,6 +274,8 @@ function LinkPropsForm({
       <div className="vrl-link-props-title">Link Properties</div>
       <div className="vrl-link-props-id">{spotId ?? '—'}</div>
 
+      {/* Link type drives computedLinkText's verb (lt.active_verb / lt.name)
+          and the viewMode badge color/letter for this spot. */}
       <select
         className="vrl-link-type-select"
         value={linkTypeId}
@@ -221,6 +287,10 @@ function LinkPropsForm({
         ))}
       </select>
 
+      {/* Active side: this document is the one performing the action (e.g.
+          "Deroga {other doc}"). Passive side: this document is the target of
+          the action described on the other document. Persisted as link_side
+          'A'/'P' in handleLinkPropsSave. */}
       <span className="vrl-link-text-label">Side of the link</span>
       <div className="vrl-link-side-group">
         <label className="vrl-link-side-label">
@@ -237,6 +307,9 @@ function LinkPropsForm({
         </label>
       </div>
 
+      {/* Grammatical gender of the TARGET document's name, needed for correct
+          Spanish article agreement ("el"/"la") in computedLinkText. Persisted
+          as target_document_gender 'M'/'F'. */}
       <span className="vrl-link-text-label">Document Gender</span>
       <div className="vrl-link-side-group">
         <label className="vrl-link-side-label">
@@ -253,6 +326,8 @@ function LinkPropsForm({
         </label>
       </div>
 
+      {/* Optional: narrows the link to a specific article within the target
+          document rather than the document as a whole. */}
       <label className="vrl-link-article-toggle">
         <input type="checkbox"
           checked={articleToggle}
@@ -262,6 +337,9 @@ function LinkPropsForm({
 
       {articleToggle && (
         <div className="vrl-link-article-fields vrl-visible">
+          {/* Free-text article reference (e.g. "Artículo 5") plus a slug
+              anchor auto-derived on blur (handleArticleTextBlur) unless the
+              user has already typed one. */}
           <span className="vrl-link-text-label">Article text</span>
           <input
             className="vrl-link-article-input"
@@ -282,6 +360,8 @@ function LinkPropsForm({
         </div>
       )}
 
+      {/* Whether the target document is served from the PDF viewer or the
+          HTML document viewer — used to build the correct link href elsewhere. */}
       <span className="vrl-link-text-label">Target Document Type</span>
       <div className="vrl-link-side-group">
         {['pdf', 'html'].map(type => (
@@ -298,6 +378,9 @@ function LinkPropsForm({
         ))}
       </div>
 
+      {/* Editable rendering of computedLinkText (VrlToolbar). Typing here sets
+          linkTextUserEdited=true, which freezes the text against further
+          auto-computation until reset via the button below. */}
       <span className="vrl-link-text-label">Link Text</span>
       <div className="vrl-link-text-wrapper">
         <textarea
@@ -315,10 +398,31 @@ function LinkPropsForm({
         </button>
       </div>
 
+      {/* Read-only display of the target document's id, set by picking a
+          search result in DocSearchPanel (handleSelectResult). */}
       <div className="vrl-link-doc-id-row">
         <span className="vrl-link-doc-id-label">Target ID:</span>
         <span className="vrl-link-doc-id-value">{selectedDocId ?? '—'}</span>
       </div>
+
+      {/* Jumps to the target document's own PDF Link Editor (handleGoToRelated
+          in the parent), carrying this link's context via router state.
+          Disabled unless a target is selected AND the form is clean — leaving
+          with unsaved edits would silently lose them. */}
+      {(() => {
+        const gotoDisabled = !selectedDocId || isDirty;
+        return (
+          <button
+            type="button"
+            className="vrl-link-goto-btn"
+            disabled={gotoDisabled}
+            onClick={onGoToRelated}
+          >
+            Go to the related document
+            <GoToIcon />
+          </button>
+        );
+      })()}
 
       <div className="vrl-link-form-actions">
         <button
@@ -352,6 +456,17 @@ function LinkPropsForm({
 
 // ── Document search panel ─────────────────────────────────────────────────────
 
+/**
+ * DocSearchPanel — lets the user find and pick the link's target document.
+ * Always rendered inside the link panel (independent of spotsNavActive /
+ * linkPropsExpanded) since search results feed LinkPropsForm's selectedDocId
+ * regardless of whether that form is currently expanded.
+ *
+ * All search-field state and the `onSearch`/`onSelectResult` handlers live in
+ * the parent VrlToolbar; this component is purely the inputs + results list.
+ * Selecting a result calls onSelectResult(doc, name), which VrlToolbar wires
+ * to handleSelectResult → handleFormChange({ selectedDocId, selectedDocName }).
+ */
 function DocSearchPanel({
   searchType, setSearchType,
   searchNumber, setSearchNumber,
@@ -441,6 +556,12 @@ function DocSearchPanel({
 
 // ── Save confirmation modal ───────────────────────────────────────────────────
 
+/**
+ * SaveConfirmModal — a plain yes/no overlay shown before the toolbar's
+ * "Save HTML" action (distinct from a single link's Save/Update, which needs
+ * no confirmation). Overwriting the saved HTML is a bigger, harder-to-undo
+ * action, hence the extra confirmation step.
+ */
 function SaveConfirmModal({ onCancel, onConfirm }) {
   return (
     <div className="vrl-confirm-overlay">
@@ -536,6 +657,8 @@ export default function VrlToolbar({
    */
   onDirtyChange,
 }) {
+  const navigate = useNavigate();
+
   // ── Link types (fetched once on mount) ───────────────────────────────────
   const [linkTypesList, setLinkTypesList] = useState([]);
 
@@ -550,11 +673,11 @@ export default function VrlToolbar({
   }, []);
 
   // ── UI panel state ───────────────────────────────────────────────────────
-  const [linkPanelOpen,     setLinkPanelOpen]     = useState(false);
-  const [spotsNavActive,    setSpotsNavActive]     = useState(false);
-  const [linkPropsExpanded, setLinkPropsExpanded]  = useState(false);
-  const [viewMode,          setViewMode]           = useState('spots');
-  const [showSaveConfirm,   setShowSaveConfirm]    = useState(false);
+  const [linkPanelOpen,     setLinkPanelOpen]     = useState(false); // collapsible panel below the main button row
+  const [spotsNavActive,    setSpotsNavActive]     = useState(false); // shows SpotsNavigator inside the link panel
+  const [linkPropsExpanded, setLinkPropsExpanded]  = useState(false); // shows LinkPropsForm below SpotsNavigator
+  const [viewMode,          setViewMode]           = useState('spots'); // 'spots' | 'paragraphs' — reported to the parent via onViewToggle
+  const [showSaveConfirm,   setShowSaveConfirm]    = useState(false); // gates the "Save HTML" action behind a confirmation modal
 
   // ── Per-spot form state ──────────────────────────────────────────────────
   const [formState,      setFormState]      = useState({ ...DEFAULT_FORM });
@@ -713,6 +836,33 @@ export default function VrlToolbar({
     onDropSpot?.(currentSpotId);
   }, [currentSpotId, linkDocumentIds, onDropSpot]);
 
+  // ── Navigate to the link's target document ────────────────────────────────
+  // Opens the same PDF Link Editor route for the target document, carrying the
+  // current link's full record via router state (`originalSideLinkInfo`) so
+  // the destination page can read it back on landing (see PdfLinkEditorPage).
+  // Only reachable when the form is clean and a target document is selected —
+  // enforced by the disabled state of the "Go to the related document" button.
+  const handleGoToRelated = useCallback(() => {
+    if (!currentSpotId || !formState.selectedDocId) return;
+    const originalSideLinkInfo = {
+      spotId:             currentSpotId,
+      linkDocumentId:     linkDocumentIds[currentSpotId] ?? null,
+      sourceDocumentId,
+      targetDocumentId:   formState.selectedDocId,
+      linkTypeId:         formState.linkTypeId,
+      linkSide:           formState.linkSide,
+      linkGender:         formState.linkGender,
+      specificArticle:    formState.articleToggle,
+      articleText:        formState.articleText,
+      articleAnchor:      formState.articleAnchor,
+      targetDocumentType: formState.targetDocumentType,
+      linkText:           displayLinkText,
+    };
+    navigate(`/admin/documents/${formState.selectedDocId}/pdf-link-editor`, {
+      state: { originalSideLinkInfo },
+    });
+  }, [navigate, currentSpotId, linkDocumentIds, sourceDocumentId, formState, displayLinkText]);
+
   // ── Save / update link document ──────────────────────────────────────────
   const handleLinkPropsSave = useCallback(async () => {
     if (!currentSpotId) return;
@@ -795,6 +945,10 @@ export default function VrlToolbar({
   }, [handleFormChange]);
 
   // ── Toolbar drag ─────────────────────────────────────────────────────────
+  // Lets the user reposition the floating toolbar by dragging its handle.
+  // Starts undocked (CSS default position); once dragged, `dragPos` overrides
+  // the CSS with absolute top/left and the toolbar stays there for the rest
+  // of the session (no persistence across remounts).
   const toolbarRef = useRef(null);
   const [dragPos,  setDragPos]  = useState(null);
   const drag = useRef({ active: false, startX: 0, startY: 0, initLeft: 0, initTop: 0 });
@@ -807,6 +961,7 @@ export default function VrlToolbar({
       if (!drag.current.active) return;
       const { startX, startY, initLeft, initTop } = drag.current;
       const el = toolbarRef.current;
+      // Clamp to the viewport (10px margin) so the toolbar can't be dragged off-screen.
       const newLeft = Math.max(10, Math.min(initLeft + (ev.clientX - startX), window.innerWidth  - el.offsetWidth  - 10));
       const newTop  = Math.max(10, Math.min(initTop  + (ev.clientY - startY), window.innerHeight - el.offsetHeight - 10));
       setDragPos({ left: newLeft, top: newTop });
@@ -824,6 +979,8 @@ export default function VrlToolbar({
   }, []);
 
   // ── Panel toggles ────────────────────────────────────────────────────────
+  // Opening the spots navigator also force-opens the link panel (so the user
+  // doesn't have to click twice); closing it only collapses the nav itself.
   const handleSpotsNavToggle = useCallback(() => {
     setSpotsNavActive(v => {
       if (!v) setLinkPanelOpen(true);
@@ -831,22 +988,29 @@ export default function VrlToolbar({
     });
   }, []);
 
+  // Toggles between the 'spots' badge view and the 'paragraphs'/link view in
+  // the parent's AnnotationCanvas rendering; reported via onViewToggle.
   const handleViewToggle = useCallback(() => {
     const next = viewMode === 'spots' ? 'paragraphs' : 'spots';
     setViewMode(next);
     onViewToggle?.(next);
   }, [viewMode, onViewToggle]);
 
+  // Confirmed via SaveConfirmModal — only then does the parent's onSave fire.
   const handleSaveConfirm = useCallback(() => {
     setShowSaveConfirm(false);
     onSave?.();
   }, [onSave]);
 
   // ── Derived ──────────────────────────────────────────────────────────────
+  // Once the toolbar has been dragged, pin it with absolute coordinates
+  // instead of the CSS-default corner anchoring.
   const toolbarStyle = dragPos
     ? { top: dragPos.top, left: dragPos.left, right: 'auto', bottom: 'auto' }
     : undefined;
 
+  // Backend record id for the active spot, if it was already saved — null
+  // means LinkPropsForm is in creation mode (no PUT target yet).
   const currentLinkDocumentId = currentSpotId ? (linkDocumentIds[currentSpotId] ?? null) : null;
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -854,13 +1018,17 @@ export default function VrlToolbar({
     <>
       <div ref={toolbarRef} className="vrl-floating-toolbar" style={toolbarStyle}>
 
-        {/* Main button row */}
+        {/* Main button row — always visible; toggles below expand the
+            collapsible link panel underneath this row. */}
         <div className="vrl-toolbar-main-row">
 
+          {/* Drag handle for repositioning the whole floating toolbar. */}
           <div className="vrl-toolbar-drag-handle" onMouseDown={handleDragStart}>
             <DragIcon />
           </div>
 
+          {/* Delegated entirely to the parent — deletes whatever spot
+              selection the parent currently tracks. */}
           <button
             className="vrl-toolbar-btn"
             data-tooltip="Delete spots in selection"
@@ -869,6 +1037,7 @@ export default function VrlToolbar({
             <DeleteIcon />
           </button>
 
+          {/* Delegated to the parent's undo stack; disabled when nothing to undo. */}
           <button
             className="vrl-toolbar-btn"
             data-tooltip="Undo last anchor"
@@ -878,6 +1047,7 @@ export default function VrlToolbar({
             <UndoIcon />
           </button>
 
+          {/* Shows/hides SpotsNavigator (prev/next + numbered jump strip). */}
           <button
             className={`vrl-toolbar-btn${spotsNavActive ? ' vrl-active' : ''}`}
             data-tooltip="Spots navigation"
@@ -886,6 +1056,7 @@ export default function VrlToolbar({
             <SpotsNavIcon />
           </button>
 
+          {/* Shows/hides the whole collapsible panel (nav + form + search). */}
           <button
             className={`vrl-toolbar-btn${linkPanelOpen ? ' vrl-active' : ''}`}
             data-tooltip="Toggle link panel"
@@ -894,6 +1065,8 @@ export default function VrlToolbar({
             <LinkPanelIcon />
           </button>
 
+          {/* Toggles the parent's annotation display between numbered "spots"
+              badges and colored "link" dots (see handleViewToggle). */}
           <button
             className={`vrl-toolbar-btn${viewMode === 'paragraphs' ? ' vrl-active' : ''}`}
             data-tooltip={viewMode === 'spots' ? 'Switch to link view' : 'Switch to spots view'}
@@ -904,6 +1077,9 @@ export default function VrlToolbar({
 
           <div className="vrl-toolbar-sep" />
 
+          {/* Opens SaveConfirmModal before calling the parent's onSave — this
+              overwrites the document's saved HTML, so it's gated behind a
+              confirmation rather than firing immediately. */}
           <button
             className="vrl-toolbar-btn"
             data-tooltip="Save HTML"
@@ -914,7 +1090,10 @@ export default function VrlToolbar({
 
         </div>
 
-        {/* Collapsible link panel */}
+        {/* Collapsible link panel — SpotsNavigator and LinkPropsForm only
+            render while their own toggles are on; DocSearchPanel is always
+            present here since it's needed to populate a target document
+            regardless of whether the form itself is expanded. */}
         {linkPanelOpen && (
           <div className="vrl-link-panel">
 
@@ -943,6 +1122,7 @@ export default function VrlToolbar({
                 onCancel={handleLinkPropsCancel}
                 onSave={handleLinkPropsSave}
                 onDrop={handleDropSpot}
+                onGoToRelated={handleGoToRelated}
               />
             )}
 

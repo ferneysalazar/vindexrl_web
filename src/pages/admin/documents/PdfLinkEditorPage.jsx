@@ -29,10 +29,8 @@
  *
  * Memory management:
  *   All blob URLs from both strip and viewer are tracked in blobUrlsRef and
- *   revoked on unmount. Raw Blobs stay in the module-level _rasterCache (api.js).
- *
- * TODO: replace RASTER_DOC_ID with the actual `docId` URL param once the raster
- *       service has all documents indexed.
+ *   revoked whenever the document changes (route param `docId`) and on unmount.
+ *   Raw Blobs stay in the module-level _rasterCache (api.js).
  */
 
 import { useState, useEffect, useRef, useCallback, useMemo, useLayoutEffect } from 'react';
@@ -61,10 +59,6 @@ const ZOOM_LEVELS = [
   { label: '150%', scale: 1.5 },
 ];
 
-// Temporary: raster service currently only has this document deployed.
-// Replace with `docId` from useParams() once all documents are indexed.
-const RASTER_DOC_ID = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11';
-
 // Converts note text containing {curly brace} segments into React nodes.
 // Segments wrapped in {} become <a> links to the target document (same
 // convention used by vrl-toolbar.js in the public page reader).
@@ -83,10 +77,26 @@ function renderNoteText(text, docId) {
 export default function PdfLinkEditorPage() {
   const { docId } = useParams();
   const navigate   = useNavigate();
-  const { state }  = useLocation();
+  const { state, pathname, search } = useLocation();
 
-  const [zoom,         setZoom]         = useState(1);
-  const [pageCount,    setPageCount]    = useState(null);
+  // Captured once on arrival: the link record we jumped here from, via the
+  // "Go to the related document" button (VrlToolbar → handleGoToRelated).
+  // Read once into state (not re-derived from `state` on every render) because
+  // the history entry is stripped of it right after — see the effect below.
+  const [originalSideLinkInfo, setOriginalSideLinkInfo] = useState(() => state?.originalSideLinkInfo ?? null);
+
+  // Consume the incoming link context exactly once: strip it from the history
+  // entry so a refresh, or navigating here again without that context, doesn't
+  // reapply stale link info.
+  useEffect(() => {
+    if (state?.originalSideLinkInfo) {
+      navigate(`${pathname}${search}`, { replace: true, state: {} });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const [zoom,         setZoom]         = useState(1);   // current scale factor, one of ZOOM_LEVELS' `scale` values
+  const [pageCount,    setPageCount]    = useState(null); // total pages in the doc; null until rasterDocs.get() resolves (drives the strip/viewer skeletons)
   const [thumbnails,   setThumbnails]   = useState([]); // strip low-res blob URLs
   const [viewerImages, setViewerImages] = useState([]); // viewer high-res blob URLs
 
@@ -132,6 +142,9 @@ export default function PdfLinkEditorPage() {
   // the viewer is still passing through intermediate pages on the way to the target.
   const suppressSync = useRef(false);
 
+  // Returns to the documents list. If we arrived here from DocumentForm
+  // (state.docItem present), pass it back as restoreItem so DocumentsPage can
+  // reopen the same document's form automatically, without an extra API call.
   const handleGoBack = () => {
     navigate('/admin/documents', state?.docItem ? { state: { restoreItem: state.docItem } } : {});
   };
@@ -146,10 +159,15 @@ export default function PdfLinkEditorPage() {
   };
 
   // ── Effect 1: fetch page count + eager initial load ───────────────────────
+  // Depends on `docId` so navigating to a different document (via "Go to the
+  // related document" or the browser Back/Forward buttons — the route element
+  // is not remounted on a param-only change) re-fetches that document's own
+  // pages instead of continuing to show whatever was loaded before.
   useEffect(() => {
     cancelledRef.current = false;
+    if (!docId) return;
 
-    rasterDocs.get(RASTER_DOC_ID)
+    rasterDocs.get(docId)
       .then(({ total_pages }) => {
         if (cancelledRef.current) return;
 
@@ -169,7 +187,7 @@ export default function PdfLinkEditorPage() {
         // Eagerly fetch strip thumbnails (low res, cheap)
         eagerStripPages.forEach(page => {
           stripLoadingSet.current.add(page);
-          rasterPages.get(RASTER_DOC_ID, page, STRIP_RES)
+          rasterPages.get(docId, page, STRIP_RES)
             .then(blobUrl => {
               if (cancelledRef.current) { URL.revokeObjectURL(blobUrl); return; }
               blobUrlsRef.current.push(blobUrl);
@@ -188,7 +206,7 @@ export default function PdfLinkEditorPage() {
         // Eagerly fetch viewer images (medium res, expensive — only first VIEWER_INITIAL_LOAD)
         eagerViewerPages.forEach(page => {
           viewerLoadingSet.current.add(page);
-          rasterPages.get(RASTER_DOC_ID, page, VIEWER_RES)
+          rasterPages.get(docId, page, VIEWER_RES)
             .then(blobUrl => {
               if (cancelledRef.current) { URL.revokeObjectURL(blobUrl); return; }
               blobUrlsRef.current.push(blobUrl);
@@ -210,9 +228,33 @@ export default function PdfLinkEditorPage() {
 
     return () => {
       cancelledRef.current = true;
+
+      // Tear down everything scoped to this document so switching to another
+      // one starts with a completely clean slate — otherwise stale
+      // loaded/loading bookkeeping from this document would silently block
+      // legitimate loads for the next one (e.g. a page already marked loaded
+      // here would never be re-fetched for the new document).
       blobUrlsRef.current.forEach(url => URL.revokeObjectURL(url));
+      blobUrlsRef.current = [];
+
+      stripLifoStack.current  = [];
+      stripLoadingSet.current = new Set();
+      stripLoadedSet.current  = new Set();
+
+      viewerLifoStack.current  = [];
+      viewerLoadingSet.current = new Set();
+      viewerLoadedSet.current  = new Set();
+
+      hiResLoadedSet.current  = new Set();
+      hiResLoadingSet.current = new Set();
+      readingTimers.current.forEach(id => clearTimeout(id));
+      readingTimers.current = new Map();
+
+      setPageCount(null);
+      setThumbnails([]);
+      setViewerImages([]);
     };
-  }, []);
+  }, [docId]);
 
   // ── Effect 2: strip IntersectionObserver + LIFO debounce ─────────────────
   // Runs after pageCount is known (DOM strip slots are mounted).
@@ -226,7 +268,7 @@ export default function PdfLinkEditorPage() {
         const page = stripLifoStack.current.pop();
         if (stripLoadedSet.current.has(page) || stripLoadingSet.current.has(page)) continue;
         stripLoadingSet.current.add(page);
-        rasterPages.get(RASTER_DOC_ID, page, STRIP_RES)
+        rasterPages.get(docId, page, STRIP_RES)
           .then(blobUrl => {
             if (cancelledRef.current) { URL.revokeObjectURL(blobUrl); return; }
             blobUrlsRef.current.push(blobUrl);
@@ -290,7 +332,7 @@ export default function PdfLinkEditorPage() {
       window.removeEventListener('keydown', onStripActivity);
       if (stripDebounce.current) clearTimeout(stripDebounce.current);
     };
-  }, [pageCount]);
+  }, [pageCount, docId]);
 
   // ── Effect 3: viewer IntersectionObserver + LIFO debounce + strip sync ────
   // Same lazy-load pattern as Effect 2 but for high-res viewer images.
@@ -309,7 +351,7 @@ export default function PdfLinkEditorPage() {
         const page = viewerLifoStack.current.pop();
         if (viewerLoadedSet.current.has(page) || viewerLoadingSet.current.has(page)) continue;
         viewerLoadingSet.current.add(page);
-        rasterPages.get(RASTER_DOC_ID, page, VIEWER_RES)
+        rasterPages.get(docId, page, VIEWER_RES)
           .then(blobUrl => {
             if (cancelledRef.current) { URL.revokeObjectURL(blobUrl); return; }
             blobUrlsRef.current.push(blobUrl);
@@ -358,7 +400,7 @@ export default function PdfLinkEditorPage() {
                 if (cancelledRef.current) return;
                 if (hiResLoadedSet.current.has(page) || hiResLoadingSet.current.has(page)) return;
                 hiResLoadingSet.current.add(page);
-                rasterPages.get(RASTER_DOC_ID, page, HIRES_RES)
+                rasterPages.get(docId, page, HIRES_RES)
                   .then(blobUrl => {
                     if (cancelledRef.current) { URL.revokeObjectURL(blobUrl); return; }
                     blobUrlsRef.current.push(blobUrl);
@@ -442,10 +484,13 @@ export default function PdfLinkEditorPage() {
       readingTimers.current.forEach(id => clearTimeout(id));
       readingTimers.current.clear();
     };
-  }, [pageCount]);
+  }, [pageCount, docId]);
 
+  // Rendered page card dimensions in px, scaled by the current zoom level.
+  // 1123 is the A4 height at 96dpi, matching BASE_PAGE_WIDTH's derivation.
   const pageWidth  = Math.round(BASE_PAGE_WIDTH * zoom);
   const pageHeight = Math.round(1123 * zoom);
+  // 1-based page numbers used to key the strip + viewer lists; empty until pageCount loads.
   const pages      = pageCount ? Array.from({ length: pageCount }, (_, i) => i + 1) : [];
 
   // ── Notes panel ──────────────────────────────────────────────────────────
@@ -821,6 +866,9 @@ export default function PdfLinkEditorPage() {
       {/* ── Strip ── thumbnail sidebar */}
       <aside ref={asideRef} className="w-[130px] shrink-0 bg-white border-r border-slate-200 overflow-y-auto">
         {pageCount === null ? (
+          // Loading skeleton — shown before rasterDocs.get() resolves and we know
+          // how many real slots to render. A fixed 3 placeholders is enough to
+          // fill the visible strip height regardless of the real page count.
           Array.from({ length: 3 }).map((_, i) => (
             <div key={i} className="flex flex-col items-center px-[10px] pt-[10px] pb-[8px]">
               <div className="w-[110px] rounded bg-slate-200 animate-pulse" style={{ height: THUMBNAIL_HEIGHT }} />
@@ -828,6 +876,11 @@ export default function PdfLinkEditorPage() {
             </div>
           ))
         ) : (
+          // One button per page. `data-page` (1-based) is read by Effect 2's
+          // IntersectionObserver to know which page a given slot represents.
+          // Clicking scrolls the viewer to that page (scrollToPage), which is
+          // the strip → viewer direction of the strip/viewer sync described
+          // in the file header comment.
           pages.map((page, i) => (
             <button
               key={page}
@@ -841,8 +894,10 @@ export default function PdfLinkEditorPage() {
                 style={{ height: THUMBNAIL_HEIGHT }}
               >
                 {thumbnails[i] ? (
+                  // Low-res blob URL loaded (eagerly or via the lazy-load observer).
                   <img src={thumbnails[i]} alt={`Page ${page}`} className="w-full h-full object-contain" />
                 ) : (
+                  // Not loaded yet — pulsing placeholder until the strip fetch resolves.
                   <div className="w-full h-full animate-pulse bg-slate-200" />
                 )}
               </div>
@@ -855,8 +910,10 @@ export default function PdfLinkEditorPage() {
       {/* ── Viewer ── toolbar + scrollable page list */}
       <main className="flex-1 flex flex-col overflow-hidden" style={{ background: 'rgb(250, 249, 245)' }}>
 
-        {/* Toolbar */}
+        {/* Toolbar — ref'd so useLayoutEffect above can measure its bottom
+            edge (toolbarBottom) and align the notes panel underneath it. */}
         <div ref={viewerToolbarRef} className="shrink-0 flex items-center gap-1 px-4 py-2 bg-white border-b border-slate-200">
+          {/* Back to the document list — see handleGoBack for the state hand-off. */}
           <button
             onClick={handleGoBack}
             title="Go back to the document"
@@ -865,6 +922,9 @@ export default function PdfLinkEditorPage() {
             <I.goBack size={18} />
           </button>
           <div className="w-px h-5 bg-slate-200 mr-2" />
+          {/* Zoom presets — scales pageWidth/pageHeight, which every page card
+              and annotation position derives from (percentages stay correct
+              across zoom levels; only the pixel base changes). */}
           {ZOOM_LEVELS.map(({ label, scale }) => (
             <button
               key={label}
@@ -917,6 +977,31 @@ export default function PdfLinkEditorPage() {
             <I.notebookTabs size={18} />
           </button>
         </div>
+
+        {/* Arrival banner — shown when this document was opened via "Go to the
+            related document" from the other side's link editor. Surfaces the
+            originating link's context (source document + link text) so the
+            user isn't dropped here with no explanation. Dismissible; does not
+            reappear on refresh (originalSideLinkInfo is consumed once — see
+            the effect above). */}
+        {originalSideLinkInfo && (
+          <div className="shrink-0 flex items-center gap-2 px-4 py-2 bg-blue-50 border-b border-blue-100 text-[12px] text-[#1e2d4a]">
+            <span>
+              Arrived from a link in document{' '}
+              <code className="font-mono text-[11px] bg-white/70 px-1 py-0.5 rounded">
+                {originalSideLinkInfo.sourceDocumentId}
+              </code>
+              {originalSideLinkInfo.linkText && <> — “{originalSideLinkInfo.linkText}”</>}
+            </span>
+            <button
+              onClick={() => setOriginalSideLinkInfo(null)}
+              title="Dismiss"
+              className="ml-auto w-6 h-6 shrink-0 rounded flex items-center justify-center text-slate-400 hover:bg-blue-100 hover:text-[#1e2d4a] transition-colors"
+            >
+              <I.x size={14} />
+            </button>
+          </div>
+        )}
 
         {/* Scrollable page list — viewer scroll container, also the IntersectionObserver root */}
         <div ref={viewerScrollRef} className="flex-1 overflow-y-auto py-8">
@@ -1039,6 +1124,10 @@ export default function PdfLinkEditorPage() {
           // Notes for the page currently visible at the top of the viewer (0-based index).
           const pageNotes = sortedSpots.filter(s => s.pageIndex === currentViewPage);
           return (
+            // Rendered via createPortal(..., document.body) below so it escapes
+            // the viewer's overflow:auto clipping. position:fixed + top:toolbarBottom
+            // anchors it directly under the toolbar regardless of viewer scroll;
+            // right:0/bottom:0 pins it to the right edge of the viewport.
             <div
               style={{
                 position:          'fixed',
@@ -1056,7 +1145,8 @@ export default function PdfLinkEditorPage() {
                 boxShadow:         '-8px 0 32px rgba(0,0,0,0.06)',
               }}
             >
-              {/* Header */}
+              {/* Header — close button, page number, and note count for the
+                  currently visible page. */}
               <div style={{
                 display:        'flex',
                 alignItems:     'center',
@@ -1131,6 +1221,7 @@ export default function PdfLinkEditorPage() {
                         onMouseEnter={e => { if (!isCurrentPage) e.currentTarget.style.background = 'rgba(0,0,0,0.06)'; }}
                         onMouseLeave={e => { if (!isCurrentPage) e.currentTarget.style.background = 'transparent'; }}
                       >
+                        {/* "P-" prefix clarifies this is a page number, not a note index. */}
                         P-{pageIdx + 1}
                       </button>
                     );
@@ -1138,7 +1229,8 @@ export default function PdfLinkEditorPage() {
                 </div>
               )}
 
-              {/* Note list */}
+              {/* Note list — one row per annotation on the current page, ordered
+                  the same way as sortedSpots (top-to-bottom, left-to-right). */}
               <div style={{ flex: 1, overflowY: 'auto', padding: '6px 0' }}>
                 {pageNotes.length === 0 && (
                   <p style={{ padding: '16px 16px', fontSize: 13, color: '#94a3b8', margin: 0 }}>
@@ -1146,6 +1238,8 @@ export default function PdfLinkEditorPage() {
                   </p>
                 )}
                 {pageNotes.map((spot, idx) => {
+                  // Same badge-color derivation as the AnnotationCanvas badges below,
+                  // kept in sync so the note's left border matches its on-page marker.
                   const linkTypeId      = spotLinkTypes[spot.id];
                   const lt              = linkTypeId ? linkTypesList.find(l => String(l.id) === String(linkTypeId)) : null;
                   const borderColor     = lt?.color ? `#${lt.color}` : '#dc2626';
@@ -1210,6 +1304,11 @@ export default function PdfLinkEditorPage() {
         document.body
       )}
 
+      {/* Floating link-editing toolbar. Owns its own per-spot form state
+          internally; this page only feeds it the annotation list + source
+          document id, and reacts to its callbacks to keep viewMode badges,
+          the notes panel, and the dirty-guard in sync. See VrlToolbar's own
+          prop docs for what each callback is for. */}
       <VrlToolbar
         spots={sortedSpots}
         currentSpotIndex={currentSpotIndex}
