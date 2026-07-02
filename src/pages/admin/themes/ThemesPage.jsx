@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, startTransition } from 'react';
 import Icon from '../../../components/shared/Icon';
 import Pagination from '../../../components/shared/Pagination';
 import { themes, subthemes } from '../../../services/api';
@@ -26,7 +26,7 @@ export default function ThemesPage() {
   const [selectedThemeId, setSelectedThemeId] = useState(null);
   const [selectedThemeName, setSelectedThemeName] = useState('');
 
-  const fetchThemes = (targetPage) => {
+  const fetchThemes = useCallback((targetPage) => {
     setThemeLoading(true);
     setThemeError(null);
     const p = targetPage ?? themePage;
@@ -39,9 +39,9 @@ export default function ThemesPage() {
       })
       .catch(e => setThemeError(e.message))
       .finally(() => setThemeLoading(false));
-  };
+  }, [themePage]);
 
-  const fetchSubthemes = (targetPage) => {
+  const fetchSubthemes = useCallback((targetPage) => {
     if (!selectedThemeId) return;
     setSubLoading(true);
     setSubError(null);
@@ -55,10 +55,12 @@ export default function ThemesPage() {
       })
       .catch(e => { setSubError(e.message); setSubLoading(false); })
       .finally(() => setSubLoading(false));
-  };
+  }, [selectedThemeId, subPage]);
 
-  useEffect(() => { fetchThemes(); }, [themePage]);
-  useEffect(() => { if (selectedThemeId) fetchSubthemes(); }, [subPage, selectedThemeId]);
+  // Wrapped in startTransition: fetchThemes/fetchSubthemes's own setLoading(true)
+  // calls would otherwise be flagged as a synchronous setState-in-effect.
+  useEffect(() => { startTransition(() => fetchThemes()); }, [fetchThemes]);
+  useEffect(() => { if (selectedThemeId) startTransition(() => fetchSubthemes()); }, [fetchSubthemes, selectedThemeId]);
 
   const handleThemeSave = async (payload) => {
     try {

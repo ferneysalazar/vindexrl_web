@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback, startTransition } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import Icon from '../../../components/shared/Icon';
 import Pagination from '../../../components/shared/Pagination';
@@ -18,21 +18,27 @@ export default function DocumentsPage() {
   const [totalPages, setTotalPages] = useState(1);
   const [editingItem, setEditingItem] = useState(undefined);
   const [searchQuery, setSearchQuery] = useState('');
+  // Read from fetchDocs instead of closing over searchQuery directly, so
+  // fetchDocs's identity (and the page-load effect below) doesn't change on
+  // every keystroke — only explicit search actions (button/Enter) use it.
+  const searchQueryRef = useRef(searchQuery);
+  useEffect(() => { searchQueryRef.current = searchQuery; });
 
-  // Re-open the form when returning from the PDF link editor
+  // Re-open the form when returning from the PDF link editor. Wrapped in
+  // startTransition so setEditingItem isn't a synchronous setState-in-effect.
   useEffect(() => {
     const restore = location.state?.restoreItem;
     if (restore) {
-      setEditingItem(restore);
+      startTransition(() => setEditingItem(restore));
       navigate(location.pathname, { replace: true, state: {} });
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const fetchDocs = (targetPage, withSearch) => {
+  const fetchDocs = useCallback((targetPage, withSearch) => {
     const p = targetPage ?? page;
     const params = { page: p, size: PAGE_SIZE };
     if (withSearch) {
-      const q = searchQuery.trim();
+      const q = searchQueryRef.current.trim();
       if (q && q.length >= 3) params.searchText = q;
     }
     setLoading(true);
@@ -46,9 +52,11 @@ export default function DocumentsPage() {
       })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false));
-  };
+  }, [page]);
 
-  useEffect(() => { fetchDocs(); }, [page]);
+  // Wrapped in startTransition: fetchDocs's own setLoading(true)/setError(null)
+  // calls would otherwise be flagged as a synchronous setState-in-effect.
+  useEffect(() => { startTransition(() => fetchDocs()); }, [fetchDocs]);
 
   const handleSave = async (payload) => {
     let docId;

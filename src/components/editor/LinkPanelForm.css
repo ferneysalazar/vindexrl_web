@@ -83,14 +83,45 @@
   margin-top: 6px;
   border-top: 1px solid rgba(0, 0, 0, 0.06);
 }
+.vrl-link-props-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 5px;
+}
 .vrl-link-props-title {
   font-size: 11px;
   font-weight: 600;
   color: #888;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  margin-bottom: 5px;
 }
+.vrl-link-props-collapsed {
+  padding-bottom: 4px;
+}
+.vrl-link-props-empty {
+  font-size: 12px;
+  color: #aaa;
+  font-style: italic;
+  padding: 4px 0 2px;
+}
+.vrl-link-use-source-btn {
+  flex-shrink: 0;
+  padding: 3px 8px;
+  background: rgba(40, 167, 69, 0.08);
+  border: 1px solid rgba(40, 167, 69, 0.3);
+  border-radius: 5px;
+  font-size: 10px;
+  font-weight: 600;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  text-transform: none;
+  letter-spacing: normal;
+  color: #28a745;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.vrl-link-use-source-btn:hover { background: rgba(40, 167, 69, 0.16); }
 .vrl-link-props-id {
   font-size: 10px;
   color: #ccc;
@@ -99,6 +130,13 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.vrl-link-geometry-dirty-msg {
+  font-size: 10px;
+  font-weight: 600;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  color: #28a745;
+  margin-bottom: 6px;
 }
 .vrl-link-type-select {
   width: 100%;

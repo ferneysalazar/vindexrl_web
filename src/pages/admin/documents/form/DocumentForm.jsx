@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, startTransition } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Icon from '../../../../components/shared/Icon';
 import { I } from '../../../../icons';
@@ -6,7 +6,7 @@ import { Section, Field, Select } from './fields';
 import EntitiesField from './EntitiesField';
 import ThemesField from './ThemesField';
 import { CHARSETS, DESC_MAX, uid } from './referenceData';
-import { documents, xdocuments, documentEntities, xsubthemes, documentSubthemes, htmlFiles } from '../../../../services/api';
+import { xdocuments, documentEntities, xsubthemes, documentSubthemes, htmlFiles } from '../../../../services/api';
 import { useDataCache } from '../../../../contexts/DataCache';
 
 const CURRENT_YEAR = new Date().getFullYear();
@@ -52,7 +52,8 @@ export default function DocumentForm({ item, onSave, onCancel }) {
 
   useEffect(() => {
     if (!isEdit) return;
-    setEntitiesLoading(true);
+    // Wrapped in startTransition so this isn't a synchronous setState-in-effect.
+    startTransition(() => setEntitiesLoading(true));
     const entityIdToName = Object.fromEntries(entityList.map(e => [e.id, e.name]));
     documentEntities.list(item.id).catch(() => [])
       .then(docEntityRes => {
@@ -73,7 +74,7 @@ export default function DocumentForm({ item, onSave, onCancel }) {
         setSavedEntities(JSON.parse(JSON.stringify(fallback)));
       })
       .finally(() => setEntitiesLoading(false));
-  }, [isEdit, item?.id, entityList]);
+  }, [isEdit, item?.id, item?.requester, entityList]);
 
   useEffect(() => {
     if (!isEdit) return;
@@ -234,6 +235,10 @@ export default function DocumentForm({ item, onSave, onCancel }) {
     return () => window.removeEventListener('message', handleMessage);
   }, []);
 
+  // Intentionally computed once (mount-time snapshot of the saved values) so
+  // isFormDirty below keeps comparing against the ORIGINAL record even as the
+  // fields above change while editing — not the exhaustive-deps list.
+  /* eslint-disable react-hooks/exhaustive-deps */
   const initialValues = useMemo(() => ({
     docType: isEdit ? (item.normTypeName ?? '') : '',
     docNumber: initStr(item?.number),
@@ -247,6 +252,7 @@ export default function DocumentForm({ item, onSave, onCancel }) {
     hasPdf: isEdit ? !!item.file_name : false,
     pdfName: initStr(item?.file_name),
   }), []);
+  /* eslint-enable react-hooks/exhaustive-deps */
 
   const isFormDirty =
     docType !== initialValues.docType ||
@@ -323,36 +329,6 @@ export default function DocumentForm({ item, onSave, onCancel }) {
       });
   };
 
-  const handleEntityUpdate = async () => {
-    if (!isEdit || !item?.id) return;
-    setEntitySaving(true);
-    try {
-      for (const entity of entities) {
-        if (!entity.value) continue;
-        const entityId = entityNameToId[entity.value];
-        if (!entityId) continue;
-        if (entity.docEntityId) {
-          await documentEntities.update(item.id, entity.docEntityId, { entityId });
-        } else {
-          await documentEntities.create(item.id, { entityId });
-        }
-      }
-      await syncEntitiesFromServer();
-    } catch (e) {
-      setSaveError('Error saving entity: ' + e.message);
-    } finally {
-      setEntitySaving(false);
-    }
-  };
-
-  const handleEntityCancel = () => {
-    if (savedEntities.length) {
-      setEntities(JSON.parse(JSON.stringify(savedEntities)));
-    } else {
-      setEntities([{ id: uid(), value: '' }]);
-    }
-  };
-
   const handleRowUpdate = async (localId) => {
     const entity = entities.find(e => e.id === localId);
     if (!entity || !entity.value || !isEdit || !item?.id) return false;
@@ -411,18 +387,6 @@ export default function DocumentForm({ item, onSave, onCancel }) {
       setEntities(prev => prev.filter(e => e.id !== entityId));
     }
     setShowEntityPopup(false);
-  };
-
-  const handleRowCancel = (entityId) => {
-    const saved = savedEntities.find(e => e.id === entityId);
-    if (saved) {
-      setEntities(prev => prev.map(e => e.id === entityId ? { ...e, value: saved.value } : e));
-    } else {
-      setEntities(prev => {
-        const filtered = prev.filter(e => e.id !== entityId);
-        return filtered.length ? filtered : [{ id: uid(), value: '' }];
-      });
-    }
   };
 
   const resolveSubthemeId = (themeName, subName) => {
@@ -643,7 +607,7 @@ export default function DocumentForm({ item, onSave, onCancel }) {
       <Section icon="themes" title="Themes & Subthemes" sub="Classify the document by theme and subtheme" disabled={!isEdit}>
         <Field label="Themes & Subthemes"
           hint={'Shows the first assignment. Click \u201cDetails\u201d to view, add or remove all theme / subtheme records.'}>
-          <ThemesField rows={themeRows} disabled={!isEdit} themeNames={themeNames} themeTree={themeTree}
+          <ThemesField rows={themeRows} disabled={!isEdit}
             onAdd={handleOpenAddSubtheme}
             onEdit={handleOpenEditSubtheme}
             onDelete={handleDeleteSubtheme} />

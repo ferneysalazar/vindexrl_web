@@ -34,6 +34,17 @@ All notable changes to this project are documented here.
 - **Tooltips on navigator buttons** — `data-tooltip` CSS `::after` tooltips added to Previous spot, Next spot, and Link properties toggle buttons using the same dark-pill style as the main toolbar buttons.
 - **Horizontal centering** of the spots navigator number list (`justify-content: center` on `.vrl-spots-nav-list`).
 
+### Changed
+- **Link gender now derived from `norm_type`, not a manual toggle** (`VrlToolbar.jsx`, `DataCache.jsx`, `PdfLinkEditorPage.jsx`) — `target_document_gender` was removed from `link_document` on the backend and added to `norm_type` instead. `DataCache` now fetches norm types via `GET /norm-types?size=1000` and exposes `normTypeInfo(normTypeId)`, returning the full norm_type record (including `gender`) for a given id. `VrlToolbar` removed the manual "Document Gender" masculine/feminine radio buttons from `LinkPropsForm`; selecting a target document in `DocSearchPanel` now derives `linkGender` automatically via `normTypeInfo(doc.normTypeId)`, and `target_document_gender` is no longer sent in the link save payload.
+- **"Use Source Info" now looks up the correct document's gender** (`VrlToolbar.jsx`, `PdfLinkEditorPage.jsx`) — the reciprocal-link quick-fill previously copied the *other* link's gender (belonging to a different document) when building the link back to the source document. `PdfLinkEditorPage` now forwards `sourceDocumentNormTypeId` (from `state.docItem.normTypeId`, when known) into `originalSideLinkInfo`, and `handleUseSourceInfo` derives gender via `normTypeInfo(originalSideLinkInfo.sourceDocumentNormTypeId)` instead.
+
+### Fixed
+- **`PdfLinkEditorPage.jsx` state-declaration order** — `setCurrentViewPage` was referenced by the viewer `IntersectionObserver` effect before its `useState` declaration (functionally harmless due to closure timing, but flagged by static analysis); moved the notes-panel state block earlier in the component.
+- Removed dead code surfaced by a full-project ESLint pass: unused `documents` import and three unused entity handlers (`handleEntityUpdate`, `handleEntityCancel`, `handleRowCancel`) in `DocumentForm.jsx`, unused `themeNames`/`themeTree` props in `ThemesField.jsx`, an unused `documentLinks` variable in `public/vrl-toolbar.js`, and an unused `subthemeNameToId` in `DataCache.jsx`.
+
+### Chore
+- **Project-wide ESLint cleanup** — resolved all `eslint-plugin-react-hooks` v7 "React Compiler" rule violations (`set-state-in-effect`, `exhaustive-deps`) across `DataCache.jsx` and every admin CRUD list page (`DocTypesPage`, `DocumentsPage`, `EntitiesPage`, `EntityTypesPage`, `ThemesPage`) by memoizing fetch functions with `useCallback` and wrapping their effect-triggered calls in `startTransition`. Added scoped, documented `eslint-disable`s for the handful of intentional exceptions (`AnnotationCanvas.jsx`'s paint-blocking layout-measurement effect, `DocumentForm.jsx`'s mount-only `initialValues` snapshot, and the co-located context-hook/icon-registry/dashboard-helper exports flagged by `react-refresh/only-export-components`). Excluded `docs/` (a non-JS `<script>` snippet kept for reference) from lint. `npm run lint` now passes with zero errors and zero warnings.
+
 ---
 
 ## 2026-07-01

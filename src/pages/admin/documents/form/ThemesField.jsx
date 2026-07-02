@@ -1,6 +1,6 @@
 import Icon from '../../../../components/shared/Icon';
 
-export default function ThemesField({ rows, disabled, themeNames, themeTree, onAdd, onEdit, onDelete }) {
+export default function ThemesField({ rows, disabled, onAdd, onEdit, onDelete }) {
   return (
     <div className="border border-[#e2e6ef] rounded-xl overflow-hidden">
       <div className="flex items-center justify-between px-4 pt-3 pb-1">

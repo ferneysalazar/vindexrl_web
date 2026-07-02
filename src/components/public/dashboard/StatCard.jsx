@@ -1,6 +1,9 @@
 import Icon from '../../shared/Icon';
 import VerDetalles from '../../shared/VerDetalles';
 
+// renderIcon/variants are shared with ContentCard and FeatureStrip; splitting
+// them into their own module just for Fast Refresh isn't worth the indirection.
+/* eslint-disable react-refresh/only-export-components */
 export function renderIcon(icon, size) {
   if (typeof icon === 'function') return icon({ size });
   return <Icon name={icon} size={size} color="currentColor" />;

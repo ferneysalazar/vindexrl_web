@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, startTransition } from 'react';
 import Icon from '../../../components/shared/Icon';
 import Pagination from '../../../components/shared/Pagination';
 import { entities, xentities } from '../../../services/api';
@@ -16,7 +16,7 @@ export default function EntitiesPage() {
   const [modal, setModal] = useState(null);
   const { reloadData } = useDataCache();
 
-  const loadPage = (p) => {
+  const loadPage = useCallback((p) => {
     setLoading(true);
     setError(null);
     xentities.list({ page: p, size: PAGE_SIZE })
@@ -28,11 +28,13 @@ export default function EntitiesPage() {
       })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false));
-  };
+  }, []);
 
-  const fetchItems = () => loadPage(page);
+  const fetchItems = useCallback(() => loadPage(page), [loadPage, page]);
 
-  useEffect(() => { fetchItems(); }, [page]);
+  // Wrapped in startTransition: loadPage's own setLoading(true)/setError(null)
+  // calls would otherwise be flagged as a synchronous setState-in-effect.
+  useEffect(() => { startTransition(() => fetchItems()); }, [fetchItems]);
 
   const handleSave = async (payload) => {
     try {

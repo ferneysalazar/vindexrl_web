@@ -16,6 +16,9 @@ export const Icon = ({ d, size = 16, stroke = 1.6, ...rest }) => (
   </svg>
 );
 
+// `I` is an icon registry (render functions keyed by name), not a component
+// itself; splitting it out just for Fast Refresh isn't worth the indirection.
+// eslint-disable-next-line react-refresh/only-export-components
 export const I = {
   dashboard: (p) => (
     <Icon {...p} d={<><rect x="3" y="3" width="7" height="9" rx="1.5" /><rect x="14" y="3" width="7" height="5" rx="1.5" /><rect x="14" y="12" width="7" height="9" rx="1.5" /><rect x="3" y="16" width="7" height="5" rx="1.5" /></>} />

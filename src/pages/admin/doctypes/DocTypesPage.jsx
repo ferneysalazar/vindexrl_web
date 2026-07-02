@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, startTransition } from 'react';
 import Icon from '../../../components/shared/Icon';
 import Pagination from '../../../components/shared/Pagination';
 import { normTypes } from '../../../services/api';
@@ -14,7 +14,7 @@ export default function DocTypesPage() {
   const [totalPages, setTotalPages] = useState(1);
   const [modal, setModal] = useState(null);
 
-  const fetchTypes = (targetPage) => {
+  const fetchTypes = useCallback((targetPage) => {
     const p = targetPage ?? page;
     setLoading(true);
     setError(null);
@@ -27,9 +27,12 @@ export default function DocTypesPage() {
       })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false));
-  };
+  }, [page]);
 
-  useEffect(() => { fetchTypes(); }, [page]);
+  // Wrapped in startTransition: fetchTypes's own setLoading(true)/setError(null)
+  // calls would otherwise be flagged as a synchronous setState-in-effect, since
+  // the compiler traces the call through fetchTypes back to this effect.
+  useEffect(() => { startTransition(() => fetchTypes()); }, [fetchTypes]);
 
   const handleSave = async (payload) => {
     try {

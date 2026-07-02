@@ -118,6 +118,8 @@ function renderLinkText(text, selectedDocId) {
  *   viewMode       — true = read-only view with colored type badge
  *   badgeColor     — CSS color string for the viewMode badge (e.g. '#0D98BA')
  *   badgeLetter    — single letter shown inside the viewMode badge
+ *   underline      — draws the rectangle's bottom border solid instead of
+ *                    dashed (mirrors link_document.underline)
  *
  * ── Drag / resize mechanics ──────────────────────────────────────────────────
  *   When at rest, `pos` is derived directly from percentage props × page
@@ -148,6 +150,10 @@ export default function AnnotationCanvas({
   // Disables the move handle so this (non-active) rectangle can't be
   // selected or dragged until the dirty link is saved/cancelled.
   locked = false,
+  // underline: when true, the rectangle's bottom border is drawn as a solid
+  // line instead of dashed (matches link_document's `underline` column —
+  // the rendered link text is underlined in the target document's HTML).
+  underline = false,
 }) {
   const canvasRef  = useRef(null);
   const wrapperRef = useRef(null); // ref on the outer positioned div
@@ -186,11 +192,16 @@ export default function AnnotationCanvas({
     return { top: r.top + 8, left: r.left - width, width };
   }, []);
 
-  // Set position when the panel opens; clear it when it closes.
+  // Set position when the panel opens; clear it when it closes. Must set state
+  // synchronously (not deferred via startTransition) since this is a layout
+  // measurement that has to land before the browser paints, or the panel would
+  // visibly flash at its previous position for one frame.
+  /* eslint-disable react-hooks/set-state-in-effect */
   useLayoutEffect(() => {
     if (!viewMode || !isSelected) { setPanelRect(null); return; }
     setPanelRect(computePanelRect());
   }, [viewMode, isSelected, computePanelRect]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   // Keep position in sync while the viewer scrolls or the window resizes.
   useEffect(() => {
@@ -216,11 +227,20 @@ export default function AnnotationCanvas({
     ctx.clearRect(0, 0, w, h);
     ctx.fillStyle = viewMode ? 'rgba(255, 160, 50, 0.06)' : 'rgba(255, 160, 50, 0.12)';
     ctx.fillRect(0, 0, w, h);
-    ctx.setLineDash([4, 3]);
     ctx.strokeStyle = '#1a56cc';
     ctx.lineWidth   = 1;
+    ctx.setLineDash([4, 3]);
     ctx.strokeRect(0.5, 0.5, w - 1, h - 1);
-  }, [pos.w, pos.h, viewMode]); // eslint-disable-line react-hooks/exhaustive-deps
+    // When underline is set, redraw just the bottom edge as a solid line —
+    // the rest of the rectangle stays dashed.
+    if (underline) {
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      ctx.moveTo(0.5, h - 0.5);
+      ctx.lineTo(w - 0.5, h - 0.5);
+      ctx.stroke();
+    }
+  }, [pos.w, pos.h, viewMode, underline]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Handle drag ───────────────────────────────────────────────────────────
   const startDrag = useCallback((e, direction) => {

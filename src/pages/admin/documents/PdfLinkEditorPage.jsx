@@ -37,8 +37,8 @@ import { useState, useEffect, useRef, useCallback, useMemo, useLayoutEffect } fr
 import { createPortal } from 'react-dom';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { I } from '../../../icons';
-import { rasterDocs, rasterPages, linkTypes as linkTypesApi, documentLinks as documentLinksApi } from '../../../services/api';
-import VrlToolbar from '../../../components/editor/VrlToolbar';
+import { rasterDocs, rasterPages, linkTypes as linkTypesApi, documentLinks as documentLinksApi, documents, normTypes } from '../../../services/api';
+import LinkPanelForm from '../../../components/editor/LinkPanelForm';
 import AnnotationCanvas from '../../../components/editor/AnnotationCanvas';
 
 const THUMBNAIL_WIDTH  = 110;
@@ -79,21 +79,42 @@ export default function PdfLinkEditorPage() {
   const navigate   = useNavigate();
   const { state, pathname, search } = useLocation();
 
-  // Captured once on arrival: the link record we jumped here from, via the
-  // "Go to the related document" button (VrlToolbar → handleGoToRelated).
-  // Read once into state (not re-derived from `state` on every render) because
-  // the history entry is stripped of it right after — see the effect below.
+  // The link record we jumped here from, via the "Go to the related document"
+  // button (LinkPanelForm → handleGoToRelated), or null.
   const [originalSideLinkInfo, setOriginalSideLinkInfo] = useState(() => state?.originalSideLinkInfo ?? null);
 
-  // Consume the incoming link context exactly once: strip it from the history
-  // entry so a refresh, or navigating here again without that context, doesn't
-  // reapply stale link info.
+  // "Go to the related document" navigates to the SAME route element (only
+  // the :docId param differs) — React Router does not remount
+  // PdfLinkEditorPage for a param-only change. So a mount-only effect (or a
+  // useState lazy initializer, which also only runs on mount) would only
+  // ever see the state from whichever document this page was ORIGINALLY
+  // opened with — never the one just navigated to. That was the bug: the
+  // banner only appeared after a manual refresh, which forces a real remount.
+  //
+  // Fix: re-sync `originalSideLinkInfo` synchronously during render whenever
+  // `docId` changes (React's documented "adjusting state when a prop
+  // changes" pattern — https://react.dev/learn/you-might-not-need-an-effect)
+  // instead of in an effect, so there's no stale-banner flash on the render
+  // right after navigating.
+  const [syncedDocId, setSyncedDocId] = useState(docId);
+  if (docId !== syncedDocId) {
+    setSyncedDocId(docId);
+    setOriginalSideLinkInfo(state?.originalSideLinkInfo ?? null);
+  }
+
+  // Strip the incoming link info from the history entry once consumed, so a
+  // refresh (or navigating back here later) doesn't reapply stale link info.
+  // Only `originalSideLinkInfo` is removed — the rest of `state` (docId,
+  // docName, docItem) is preserved, since EditorLayout's header reads
+  // `state.docName`/`state.docId` on every render and would otherwise revert
+  // to its generic "PDF Link Editor" fallback as soon as this effect fires.
   useEffect(() => {
     if (state?.originalSideLinkInfo) {
-      navigate(`${pathname}${search}`, { replace: true, state: {} });
+      const { originalSideLinkInfo: _consumed, ...rest } = state;
+      navigate(`${pathname}${search}`, { replace: true, state: rest });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [docId]);
 
   const [zoom,         setZoom]         = useState(1);   // current scale factor, one of ZOOM_LEVELS' `scale` values
   const [pageCount,    setPageCount]    = useState(null); // total pages in the doc; null until rasterDocs.get() resolves (drives the strip/viewer skeletons)
@@ -141,6 +162,29 @@ export default function PdfLinkEditorPage() {
   // scroll events fired mid-animation cannot accidentally re-enable sync while
   // the viewer is still passing through intermediate pages on the way to the target.
   const suppressSync = useRef(false);
+
+  // ── Notes panel ──────────────────────────────────────────────────────────
+  // `isNotesOpen` toggles the right-anchored page-notes panel.
+  // `currentViewPage` (0-based) tracks the topmost visible page in the viewer;
+  //  updated by the IntersectionObserver in Effect 3.
+  // `toolbarBottom` is the viewport y of the viewer toolbar's bottom edge,
+  //  measured via a ResizeObserver so the notes panel top stays aligned.
+  // Declared here (ahead of Effect 3) since that effect's closure reads
+  // `setCurrentViewPage`.
+  const [isNotesOpen,      setIsNotesOpen]      = useState(false);
+  const [currentViewPage,  setCurrentViewPage]  = useState(0);
+  const [toolbarBottom,    setToolbarBottom]    = useState(92); // fallback ≈ header(48)+toolbar(44)
+  const viewerToolbarRef = useRef(null);
+
+  useLayoutEffect(() => {
+    const el = viewerToolbarRef.current;
+    if (!el) return;
+    const update = () => setToolbarBottom(el.getBoundingClientRect().bottom);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   // Returns to the documents list. If we arrived here from DocumentForm
   // (state.docItem present), pass it back as restoreItem so DocumentsPage can
@@ -453,8 +497,7 @@ export default function PdfLinkEditorPage() {
 
     viewerObserver.current = obs;
 
-    pageRefs.current.forEach((el, i) => {
-      const page = i + 1;
+    pageRefs.current.forEach((el) => {
       if (el) obs.observe(el);
     });
 
@@ -492,27 +535,6 @@ export default function PdfLinkEditorPage() {
   const pageHeight = Math.round(1123 * zoom);
   // 1-based page numbers used to key the strip + viewer lists; empty until pageCount loads.
   const pages      = pageCount ? Array.from({ length: pageCount }, (_, i) => i + 1) : [];
-
-  // ── Notes panel ──────────────────────────────────────────────────────────
-  // `isNotesOpen` toggles the right-anchored page-notes panel.
-  // `currentViewPage` (0-based) tracks the topmost visible page in the viewer;
-  //  updated by the IntersectionObserver in Effect 3.
-  // `toolbarBottom` is the viewport y of the viewer toolbar's bottom edge,
-  //  measured via a ResizeObserver so the notes panel top stays aligned.
-  const [isNotesOpen,      setIsNotesOpen]      = useState(false);
-  const [currentViewPage,  setCurrentViewPage]  = useState(0);
-  const [toolbarBottom,    setToolbarBottom]    = useState(92); // fallback ≈ header(48)+toolbar(44)
-  const viewerToolbarRef = useRef(null);
-
-  useLayoutEffect(() => {
-    const el = viewerToolbarRef.current;
-    if (!el) return;
-    const update = () => setToolbarBottom(el.getBoundingClientRect().bottom);
-    update();
-    const ro = new ResizeObserver(update);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
 
   // ── View / edit mode ─────────────────────────────────────────────────────
   // Toggled by the linkEditMode / linkViewMode icon button in the toolbar.
@@ -552,7 +574,7 @@ export default function PdfLinkEditorPage() {
   // Ghost rect shown while the user is shift-dragging to draw a new annotation.
   // { pageIndex, x, y, w, h } in pixels relative to the page, or null.
   const [drawingRect,      setDrawingRect]      = useState(null);
-  // True while VrlToolbar has unsaved changes on the active link. While
+  // True while LinkPanelForm has unsaved changes on the active link. While
   // dirty, the user must Save/Update/Cancel before creating a new rectangle
   // or selecting a different one — otherwise in-progress edits are silently lost.
   const [isLinkDirty,      setIsLinkDirty]      = useState(false);
@@ -571,13 +593,13 @@ export default function PdfLinkEditorPage() {
   //   1. On load — seeded from the GET /documentLinks response (see the effect
   //      below) so existing saved links immediately show the right badge color.
   //   2. On change — updated in real time via handleSpotLinkTypeChange, which
-  //      VrlToolbar calls whenever the user changes the link-type dropdown.
+  //      LinkPanelForm calls whenever the user changes the link-type dropdown.
   //      This means the badge updates live even before the user hits "Save link".
   //
   // A spotId without an entry in this map (newly drawn annotation not yet
   // assigned a type) falls back to the default red badge with no letter.
   const [spotLinkTypes, setSpotLinkTypes] = useState({});
-  // initialLinkData seeds VrlToolbar's per-spot form store and linkDocumentIds
+  // initialLinkData seeds LinkPanelForm's per-spot form store and linkDocumentIds
   // on mount so the link panel shows pre-saved values for existing annotations.
   const [initialLinkData,  setInitialLinkData]  = useState([]);
 
@@ -618,11 +640,15 @@ export default function PdfLinkEditorPage() {
             const fs = {
               linkTypeId:           link.link_type_id                    ?? '',
               linkSide:             link.link_side === 'A'               ? 'active'    : 'passive',
-              linkGender:           link.target_document_gender === 'M'  ? 'masculine' : 'feminine',
+              // linkGender is resolved separately below, per target document's
+              // norm_type — GET /documentLinks no longer returns
+              // target_document_gender directly (moved off link_document onto
+              // norm_type). Falls back to DEFAULT_FORM's 'feminine' until then.
               articleToggle:        link.specific_article                ?? false,
               articleText:          link.target_article_text             ?? '',
               articleAnchor:        link.target_article_anchor           ?? '',
               targetDocumentType:   link.target_document_type            ?? 'pdf',
+              underline:            link.underline                       ?? false,
               linkText:             link.link_text                       ?? '',
               linkTextUserEdited:   !!link.link_text,
               selectedDocId:        link.target_document_id              ?? null,
@@ -636,6 +662,7 @@ export default function PdfLinkEditorPage() {
             newDisplay[spotId] = {
               displayLinkText: fs.linkText    || '',
               selectedDocId:   fs.selectedDocId ?? null,
+              underline:       fs.underline    ?? false,
             };
           });
         }
@@ -646,12 +673,48 @@ export default function PdfLinkEditorPage() {
         setSpotLinkTypes(newTypes);
         setSpotDisplayData(newDisplay);
         setSelectedAnnId(null);
+
+        // Resolve each distinct target document's gender via its own
+        // norm_type (GET /documentLinks has no gender field to read
+        // directly), then patch it into the already-seeded link data. Uses
+        // dedicated per-id fetches (documents.get → normTypes.get) rather
+        // than the DataCache norm-type cache, so this doesn't race whether
+        // that cache has finished loading yet.
+        const targetIds = [...new Set(newLinkData.map(d => d.formState.selectedDocId).filter(Boolean))];
+        if (targetIds.length) {
+          Promise.all(targetIds.map(id =>
+            documents.get(id)
+              .then(doc => doc?.normTypeId ? normTypes.get(doc.normTypeId) : null)
+              .then(nt => [id, nt?.gender === 'M' ? 'masculine' : nt?.gender === 'F' ? 'feminine' : null])
+              .catch(() => [id, null])
+          )).then(pairs => {
+            const genderByTargetId = Object.fromEntries(pairs.filter(([, gender]) => gender));
+            if (!Object.keys(genderByTargetId).length) return;
+            setInitialLinkData(prev => prev.map(entry => {
+              const gender = genderByTargetId[entry.formState.selectedDocId];
+              return gender ? { ...entry, formState: { ...entry.formState, linkGender: gender } } : entry;
+            }));
+          });
+        }
       })
       .catch(err => console.error('Failed to load document links:', err));
   }, [docId]);
 
   // Deselects all annotations. Also wired to Escape key; call programmatically when needed.
   const deselectAll = useCallback(() => setSelectedAnnId(null), [setSelectedAnnId]);
+
+  // Deselects when the user clicks in the scrollable viewer content panel but
+  // outside every page's image container (data-page-image-container — see the
+  // per-page wrapper below): i.e. the padding/gaps around and between pages,
+  // not the page image or an annotation rectangle (those are inside that
+  // container and have their own click handling). LinkPanelForm is a DOM
+  // sibling of this panel (rendered after </main>), so clicks there never
+  // reach this handler and are unaffected. Same dirty-link guard as Escape.
+  const handleContentPanelClick = useCallback((e) => {
+    if (isLinkDirty) return;
+    if (e.target.closest('[data-page-image-container]')) return;
+    deselectAll();
+  }, [isLinkDirty, deselectAll]);
 
   // Selects a different annotation, unless the active link has unsaved
   // changes — in that case the switch is ignored until the user saves,
@@ -701,7 +764,7 @@ export default function PdfLinkEditorPage() {
   }, [sortedSpots, isLinkDirty, selectedAnnId]);
 
   /**
-   * handleSpotLinkTypeChange — called by VrlToolbar whenever the user changes
+   * handleSpotLinkTypeChange — called by LinkPanelForm whenever the user changes
    * the link-type dropdown for a spot.
    *
    * Keeps `spotLinkTypes` in sync so the viewMode badge color updates
@@ -712,19 +775,20 @@ export default function PdfLinkEditorPage() {
   }, []);
 
   /**
-   * handleSpotDataChange — called by VrlToolbar whenever the display text or
-   * target document changes for the active spot.  Keeps spotDisplayData in sync
-   * so the viewMode info panel always shows up-to-date content without requiring
-   * the user to save first.
+   * handleSpotDataChange — called by LinkPanelForm whenever the display text,
+   * target document, or underline toggle changes for the active spot.  Keeps
+   * spotDisplayData in sync so the viewMode info panel and the annotation
+   * rectangle's border (see AnnotationCanvas's underline prop) always reflect
+   * up-to-date content without requiring the user to save first.
    */
-  const handleSpotDataChange = useCallback((spotId, displayLinkText, selectedDocId) => {
-    setSpotDisplayData(prev => ({ ...prev, [spotId]: { displayLinkText, selectedDocId } }));
+  const handleSpotDataChange = useCallback((spotId, displayLinkText, selectedDocId, underline) => {
+    setSpotDisplayData(prev => ({ ...prev, [spotId]: { displayLinkText, selectedDocId, underline } }));
   }, []);
 
   /**
    * handleDropSpot — removes an annotation from the viewer entirely.
    *
-   * Called by VrlToolbar after the backend record (if any) has been deleted:
+   * Called by LinkPanelForm after the backend record (if any) has been deleted:
    *   • "Drop link" button (update mode, invalid form)
    *   • Cancel / Drop button (creation mode, invalid form)
    *
@@ -987,10 +1051,17 @@ export default function PdfLinkEditorPage() {
         {originalSideLinkInfo && (
           <div className="shrink-0 flex items-center gap-2 px-4 py-2 bg-blue-50 border-b border-blue-100 text-[12px] text-[#1e2d4a]">
             <span>
+              {/* Prefer the human-readable name; fall back to the raw id when
+                  the source page couldn't supply one (see sourceDocumentName
+                  prop doc on the LinkPanelForm element below). */}
               Arrived from a link in document{' '}
-              <code className="font-mono text-[11px] bg-white/70 px-1 py-0.5 rounded">
-                {originalSideLinkInfo.sourceDocumentId}
-              </code>
+              {originalSideLinkInfo.sourceDocumentName ? (
+                <strong className="font-semibold">{originalSideLinkInfo.sourceDocumentName}</strong>
+              ) : (
+                <code className="font-mono text-[11px] bg-white/70 px-1 py-0.5 rounded">
+                  {originalSideLinkInfo.sourceDocumentId}
+                </code>
+              )}
               {originalSideLinkInfo.linkText && <> — “{originalSideLinkInfo.linkText}”</>}
             </span>
             <button
@@ -1003,8 +1074,10 @@ export default function PdfLinkEditorPage() {
           </div>
         )}
 
-        {/* Scrollable page list — viewer scroll container, also the IntersectionObserver root */}
-        <div ref={viewerScrollRef} className="flex-1 overflow-y-auto py-8">
+        {/* Scrollable page list — viewer scroll container, also the IntersectionObserver root.
+            onClick deselects the active annotation when the click lands outside every
+            page's image container (see handleContentPanelClick). */}
+        <div ref={viewerScrollRef} className="flex-1 overflow-y-auto py-8" onClick={handleContentPanelClick}>
           <div className="flex flex-col items-center gap-8">
             {pages.map((page, i) => (
               <div
@@ -1013,10 +1086,13 @@ export default function PdfLinkEditorPage() {
                 data-page={page}
                 className="flex flex-col items-center gap-2"
               >
-                {/* Page wrapper — relative so annotations are positioned inside it.
-                    Shift+drag draws a custom rectangle; Shift+click uses a default size. */}
+                {/* Page image container — relative so annotations are positioned inside it.
+                    Shift+drag draws a custom rectangle; Shift+click uses a default size.
+                    data-page-image-container marks its boundary for handleContentPanelClick,
+                    which deselects on clicks that land outside every one of these. */}
                 <div
                   className="relative"
+                  data-page-image-container
                   style={{ width: pageWidth }}
                   onMouseDown={e => handlePageMouseDown(e, i)}
                 >
@@ -1071,6 +1147,7 @@ export default function PdfLinkEditorPage() {
                     const displayData     = spotDisplayData[ann.id] ?? {};
                     const displayLinkText = displayData.displayLinkText || '';
                     const spotDocId       = displayData.selectedDocId   || null;
+                    const spotUnderline   = displayData.underline       || false;
                     return (
                       <AnnotationCanvas
                         key={ann.id}
@@ -1089,6 +1166,7 @@ export default function PdfLinkEditorPage() {
                         badgeLetter={badgeLetter}
                         displayLinkText={displayLinkText}
                         selectedDocId={spotDocId}
+                        underline={spotUnderline}
                         scrollContainerRef={viewerScrollRef}
                       />
                     );
@@ -1307,18 +1385,36 @@ export default function PdfLinkEditorPage() {
       {/* Floating link-editing toolbar. Owns its own per-spot form state
           internally; this page only feeds it the annotation list + source
           document id, and reacts to its callbacks to keep viewMode badges,
-          the notes panel, and the dirty-guard in sync. See VrlToolbar's own
+          the notes panel, and the dirty-guard in sync. See LinkPanelForm's own
           prop docs for what each callback is for. */}
-      <VrlToolbar
+      <LinkPanelForm
         spots={sortedSpots}
         currentSpotIndex={currentSpotIndex}
         onNavigate={handleNavigate}
         sourceDocumentId={docId ?? null}
+        // Only populated when this page was opened directly from DocumentForm
+        // (state.docName) — used solely to label the source side of the link
+        // in the arrival banner on the target document; null otherwise (e.g.
+        // this document was itself reached via a previous "Go to the related
+        // document" hop), in which case the banner falls back to the id.
+        sourceDocumentName={state?.docName ?? null}
+        // Same availability as sourceDocumentName above (state.docItem, set
+        // only when opened directly from DocumentForm) — forwarded into
+        // originalSideLinkInfo so the target document's "Use Source Info"
+        // can look up this document's gender via normTypeInfo.
+        sourceDocumentNormTypeId={state?.docItem?.normTypeId ?? null}
+        // The link we arrived from (see the effect above). Lets LinkPanelForm
+        // offer "Use Source Info" on a brand-new link so the user can build
+        // the reciprocal link back to that document in one click.
+        originalSideLinkInfo={originalSideLinkInfo}
         initialLinkData={initialLinkData}
         onSpotLinkTypeChange={handleSpotLinkTypeChange}
         onSpotDataChange={handleSpotDataChange}
         onDropSpot={handleDropSpot}
         onDirtyChange={setIsLinkDirty}
+        // Cancel (when the rectangle was moved/resized) reverts it the same
+        // way a live drag/resize from AnnotationCanvas itself is applied.
+        onRevertGeometry={handleAnnotationChange}
       />
     </>
   );

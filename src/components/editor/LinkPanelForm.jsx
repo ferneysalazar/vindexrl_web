@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { xdocuments, linkTypes as linkTypesApi, documentLinks as documentLinksApi } from '../../services/api';
-import './VrlToolbar.css';
+import { documents, xdocuments, linkTypes as linkTypesApi, documentLinks as documentLinksApi } from '../../services/api';
+import { useDataCache } from '../../contexts/DataCache';
+import './LinkPanelForm.css';
 
 // ── Inline SVG icons ──────────────────────────────────────────────────────────
 
@@ -103,16 +104,21 @@ function GoToIcon() {
 
 // Shape of the editable state for one annotation's link record — the value
 // type of linkPropsStoreRef/baselineStoreRef (keyed by spotId) and of the
-// `formState` used by LinkPropsForm. Also mirrors the fields VrlToolbar sends
+// `formState` used by LinkPropsForm. Also mirrors the fields LinkPanelForm sends
 // to the backend in handleLinkPropsSave and forwards to the target document
 // in handleGoToRelated's `originalSideLinkInfo`.
 const DEFAULT_FORM = {
   linkTypeId:           '',
   linkSide:             'active',
+  // Grammatical gender ('masculine'/'feminine') of the selected target
+  // document's name, for Spanish article agreement in computedLinkText.
+  // No longer user-editable — set from the target document's norm_type
+  // (see handleSelectResult/normTypeInfo) whenever a document is picked.
   linkGender:           'feminine',
   articleToggle:        false,
   articleText:          '',
   articleAnchor:        '',
+  underline:            false,
   targetDocumentType:   'pdf',
   linkText:             '',       // only used when linkTextUserEdited === true
   linkTextUserEdited:   false,
@@ -209,14 +215,16 @@ function SpotsNavigator({ spots, currentSpotIndex, isDirty, onNavigate, onToggle
 
 /**
  * LinkPropsForm — the editable record for a single annotation spot: link
- * type, active/passive side, target document gender (for Spanish article
- * agreement), an optional specific-article reference, target document type
- * (pdf/html), the computed-or-edited link text, and Save/Cancel/Drop/Go-to
- * actions.
+ * type, active/passive side, an optional specific-article reference, target
+ * document type (pdf/html), the computed-or-edited link text, and
+ * Save/Cancel/Drop/Go-to actions. The target document's grammatical gender
+ * (for Spanish article agreement) is no longer edited here — it's derived
+ * in the parent from the selected document's norm_type (see LinkPanelForm's
+ * handleSelectResult/normTypeInfo).
  *
  * This component is purely presentational + local derivations (canSave,
  * saveLabel, isCreation) — all persistence and dirty-tracking live in the
- * parent VrlToolbar; every field change is reported upward via `onChange`.
+ * parent LinkPanelForm; every field change is reported upward via `onChange`.
  *
  * Props:
  *   spotId              — id of the annotation this form edits, or null.
@@ -227,7 +235,11 @@ function SpotsNavigator({ spots, currentSpotIndex, isDirty, onNavigate, onToggle
  *   displayLinkText      — computed-or-user-edited text shown in the textarea.
  *   onChange(patch)      — merge `patch` into formState (marks dirty).
  *   onArticleTextBlur()  — auto-fills the article anchor from the article text.
- *   isDirty              — whether formState differs from the saved baseline.
+ *   isDirty              — whether formState OR the rectangle's position/size
+ *                          differs from the saved baseline.
+ *   geometryDirty        — specifically whether the rectangle's position/size
+ *                          changed; shows a "Dimensions or position changed"
+ *                          note. onCancel also reverts the rectangle itself.
  *   saveLinkStatus       — 'idle' | 'saving' | 'saved' | 'error', drives the
  *                          Save button's label/style.
  *   onCancel()           — update mode: restore the baseline (only when dirty).
@@ -235,6 +247,15 @@ function SpotsNavigator({ spots, currentSpotIndex, isDirty, onNavigate, onToggle
  *   onDrop()             — delete the backend record (if any) and the spot.
  *   onGoToRelated()      — navigate to the target document's own editor,
  *                          carrying this link's full context with it.
+ *   originalSideLinkInfo — the link record this document was reached from,
+ *                          or null. When non-null AND this is a brand-new
+ *                          (unsaved) link, shows "Use Source Info" next to
+ *                          the title to pre-fill the reciprocal link.
+ *   normTypeInfo(id)     — looks up a norm_type record (incl. gender) by id;
+ *                          used by "Use Source Info" to derive the reciprocal
+ *                          link's gender from the source document's own
+ *                          norm_type rather than the (unrelated) gender that
+ *                          was set for the original link's own target.
  */
 function LinkPropsForm({
   spotId,
@@ -245,13 +266,33 @@ function LinkPropsForm({
   onChange,
   onArticleTextBlur,
   isDirty,
+  // geometryDirty: true when this spot's rectangle position/size has changed
+  // since it was selected (or last saved) — see the geometryBaselines
+  // tracking in the parent. Folded into `isDirty` for gating purposes there;
+  // kept separate here only to show the "Dimensions or position changed" note.
+  geometryDirty,
   saveLinkStatus,
+  originalSideLinkInfo,
+  normTypeInfo,
   onCancel,
   onSave,
   onDrop,
   onGoToRelated,
 }) {
-  const { linkTypeId, linkSide, linkGender, articleToggle, articleText, articleAnchor, targetDocumentType, selectedDocId } = formState;
+  // No annotation is currently selected (spotsNavActive/linkPropsExpanded can
+  // both be true with nothing selected — e.g. right after opening the panel,
+  // or after Cancel/Drop clears the selection) — collapse to a placeholder
+  // instead of rendering a form with nothing meaningful to edit.
+  if (!spotId) {
+    return (
+      <div className="vrl-link-props vrl-link-props-collapsed">
+        <div className="vrl-link-props-title">Link Properties</div>
+        <div className="vrl-link-props-empty">No Link selected</div>
+      </div>
+    );
+  }
+
+  const { linkTypeId, linkSide, articleToggle, articleText, articleAnchor, underline, targetDocumentType, selectedDocId } = formState;
 
   // Save is only valid when both a link type and non-empty link text are present.
   const canSave = !!linkTypeId && !!displayLinkText.trim();
@@ -269,10 +310,59 @@ function LinkPropsForm({
   const handleCancel   = isCreation ? onDrop : onCancel;
   const cancelDisabled = isCreation ? false : !isDirty;
 
+  // "Use Source Info" only makes sense for a brand-new link (there's nothing
+  // to reciprocate on an already-saved one) and only when we actually arrived
+  // via a link from another document.
+  const showUseSourceInfo = isCreation && !!originalSideLinkInfo;
+
+  // Builds the reciprocal link back to the document this one was reached
+  // from: same link type, the OPPOSITE side (the source was e.g. 'active', so
+  // this link — described from here — is 'passive'), target document = the
+  // source document, and linkTextUserEdited reset to false so displayLinkText
+  // falls back to the normal computedLinkText logic (LinkPanelForm) instead of
+  // copying the source's literal text.
+  //
+  // Gender is looked up fresh from the source document's own norm_type
+  // (originalSideLinkInfo.sourceDocumentNormTypeId) rather than reusing
+  // originalSideLinkInfo.linkGender, which is the gender of THAT link's own
+  // target (i.e. this document, not the source document being selected here).
+  const handleUseSourceInfo = () => {
+    if (!originalSideLinkInfo) return;
+    const sourceGender = normTypeInfo?.(originalSideLinkInfo.sourceDocumentNormTypeId)?.gender === 'M'
+      ? 'masculine' : 'feminine';
+    onChange({
+      linkTypeId:         originalSideLinkInfo.linkTypeId,
+      linkSide:           originalSideLinkInfo.linkSide === 'active' ? 'passive' : 'active',
+      linkGender:         sourceGender,
+      targetDocumentType: originalSideLinkInfo.targetDocumentType,
+      selectedDocId:      originalSideLinkInfo.sourceDocumentId,
+      selectedDocName:    originalSideLinkInfo.sourceDocumentName ?? null,
+      linkTextUserEdited: false,
+      linkText:           '',
+    });
+  };
+
   return (
     <div className="vrl-link-props">
-      <div className="vrl-link-props-title">Link Properties</div>
+      <div className="vrl-link-props-title-row">
+        <div className="vrl-link-props-title">Link Properties</div>
+        {showUseSourceInfo && (
+          <button
+            type="button"
+            className="vrl-link-use-source-btn"
+            onClick={handleUseSourceInfo}
+          >
+            Use Source Info
+          </button>
+        )}
+      </div>
       <div className="vrl-link-props-id">{spotId ?? '—'}</div>
+
+      {/* Shown when the rectangle has been moved/resized since it was
+          selected (or last saved) — see geometryDirty in the parent. */}
+      {geometryDirty && (
+        <div className="vrl-link-geometry-dirty-msg">Dimensions or position changed</div>
+      )}
 
       {/* Link type drives computedLinkText's verb (lt.active_verb / lt.name)
           and the viewMode badge color/letter for this spot. */}
@@ -304,25 +394,6 @@ function LinkPropsForm({
             checked={linkSide === 'passive'}
             onChange={() => onChange({ linkSide: 'passive' })}
           /> Passive side
-        </label>
-      </div>
-
-      {/* Grammatical gender of the TARGET document's name, needed for correct
-          Spanish article agreement ("el"/"la") in computedLinkText. Persisted
-          as target_document_gender 'M'/'F'. */}
-      <span className="vrl-link-text-label">Document Gender</span>
-      <div className="vrl-link-side-group">
-        <label className="vrl-link-side-label">
-          <input type="radio" name="vrlLinkGender" value="feminine"
-            checked={linkGender === 'feminine'}
-            onChange={() => onChange({ linkGender: 'feminine' })}
-          /> Femenine
-        </label>
-        <label className="vrl-link-side-label">
-          <input type="radio" name="vrlLinkGender" value="masculine"
-            checked={linkGender === 'masculine'}
-            onChange={() => onChange({ linkGender: 'masculine' })}
-          /> Masculine
         </label>
       </div>
 
@@ -360,6 +431,15 @@ function LinkPropsForm({
         </div>
       )}
 
+      {/* Whether the rendered link text should be underlined in the target
+          document's HTML output. */}
+      <label className="vrl-link-article-toggle">
+        <input type="checkbox"
+          checked={underline}
+          onChange={e => onChange({ underline: e.target.checked })}
+        /> Underline link text
+      </label>
+
       {/* Whether the target document is served from the PDF viewer or the
           HTML document viewer — used to build the correct link href elsewhere. */}
       <span className="vrl-link-text-label">Target Document Type</span>
@@ -378,7 +458,7 @@ function LinkPropsForm({
         ))}
       </div>
 
-      {/* Editable rendering of computedLinkText (VrlToolbar). Typing here sets
+      {/* Editable rendering of computedLinkText (LinkPanelForm). Typing here sets
           linkTextUserEdited=true, which freezes the text against further
           auto-computation until reset via the button below. */}
       <span className="vrl-link-text-label">Link Text</span>
@@ -463,8 +543,8 @@ function LinkPropsForm({
  * regardless of whether that form is currently expanded.
  *
  * All search-field state and the `onSearch`/`onSelectResult` handlers live in
- * the parent VrlToolbar; this component is purely the inputs + results list.
- * Selecting a result calls onSelectResult(doc, name), which VrlToolbar wires
+ * the parent LinkPanelForm; this component is purely the inputs + results list.
+ * Selecting a result calls onSelectResult(doc, name), which LinkPanelForm wires
  * to handleSelectResult → handleFormChange({ selectedDocId, selectedDocName }).
  */
 function DocSearchPanel({
@@ -581,10 +661,23 @@ function SaveConfirmModal({ onCancel, onConfirm }) {
 
 /**
  * Props:
- *   spots             [{ id, ... }]  — annotation spots for the navigator
- *   currentSpotIndex  number         — index into spots[] (-1 = none selected)
- *   undoEnabled       boolean
- *   sourceDocumentId  string|null    — ID of the document being edited (for link save payload)
+ *   spots               [{ id, ... }]  — annotation spots for the navigator
+ *   currentSpotIndex    number         — index into spots[] (-1 = none selected)
+ *   undoEnabled         boolean
+ *   sourceDocumentId    string|null    — ID of the document being edited (for link save payload)
+ *   sourceDocumentName  string|null    — display name of the document being edited, if known
+ *                                        (only set when this editor was opened from DocumentForm).
+ *                                        Forwarded into originalSideLinkInfo so the target
+ *                                        document's arrival banner can show a name instead
+ *                                        of a raw id when one is available.
+ *   sourceDocumentNormTypeId string|null — norm_type id of the document being edited, if
+ *                                        known (same source as sourceDocumentName). Used
+ *                                        directly by computedLinkText to pick the gender-
+ *                                        agreeing passive verb form (this document is the
+ *                                        passive subject on the passive side), and also
+ *                                        forwarded into originalSideLinkInfo so the target
+ *                                        document's "Use Source Info" can look up this
+ *                                        document's gender when building the reciprocal link.
  *
  * Callback props (implement the logic in the parent):
  *   onDeleteSpots()           — mousedown: delete spots in current selection
@@ -597,11 +690,27 @@ function SaveConfirmModal({ onCancel, onConfirm }) {
  * Link document save/update is handled internally via POST/PUT /documentLink.
  * Per-spot form state is maintained internally with save/cancel/baseline semantics.
  */
-export default function VrlToolbar({
+export default function LinkPanelForm({
   spots = [],
   currentSpotIndex = -1,
   undoEnabled = false,
   sourceDocumentId = null,
+  sourceDocumentName = null,
+  sourceDocumentNormTypeId = null,
+  /**
+   * originalSideLinkInfo
+   *
+   * The link record this document was reached from (via "Go to the related
+   * document" on the OTHER document's editor) — see PdfLinkEditorPage's
+   * `originalSideLinkInfo` state, which is what's passed in here. Null when
+   * this editor was opened any other way.
+   *
+   * Used to power the "Use Source Info" button in LinkPropsForm: for a
+   * brand-new (unsaved) link, it lets the user build the reciprocal link
+   * back to that source document in one click instead of re-entering the
+   * same link type/gender/document type by hand.
+   */
+  originalSideLinkInfo = null,
   // Pre-seeded from GET /documentLinks: [{ spotId, linkDocumentId, formState }]
   initialLinkData = [],
   onDeleteSpots,
@@ -624,18 +733,20 @@ export default function VrlToolbar({
    */
   onSpotLinkTypeChange,
   /**
-   * onSpotDataChange(spotId, displayLinkText, selectedDocId)
+   * onSpotDataChange(spotId, displayLinkText, selectedDocId, underline)
    *
-   * Optional callback fired whenever the display text or target document
-   * changes for the currently active spot.
+   * Optional callback fired whenever the display text, target document, or
+   * underline toggle changes for the currently active spot.
    *
    * The parent (PdfLinkEditorPage) stores this in `spotDisplayData` so the
-   * viewMode info panel shows the current link text and correct <a> href
-   * in real time — again, without needing a save.
+   * viewMode info panel shows the current link text and correct <a> href,
+   * and the annotation rectangle's bottom border renders solid instead of
+   * dashed when underline is set — all in real time, without needing a save.
    *
-   * Implemented as a useEffect watching `displayLinkText` and
-   * `formState.selectedDocId`, so it fires both on spot navigation (text
-   * loads from the store) and on any form change that updates the derived text.
+   * Implemented as a useEffect watching `displayLinkText`,
+   * `formState.selectedDocId`, and `formState.underline`, so it fires both on
+   * spot navigation (values load from the store) and on any form change that
+   * updates them.
    */
   onSpotDataChange,
   /**
@@ -653,11 +764,25 @@ export default function VrlToolbar({
    * The parent (PdfLinkEditorPage) uses this to block creating a new
    * annotation rectangle or selecting a different one while there are
    * unsaved changes on the active link — the user must Save/Update/Cancel
-   * first.
+   * first. Reflects formState edits AND rectangle position/size changes.
    */
   onDirtyChange,
+  /**
+   * onRevertGeometry(pageIndex, spotId, { x, y, w, h })
+   *
+   * Called from Cancel when the rectangle's position/size was changed since
+   * the spot was selected (or last saved). The parent (PdfLinkEditorPage)
+   * applies this the same way it applies a drag/resize from AnnotationCanvas
+   * itself (handleAnnotationChange), snapping the rectangle back to its
+   * baseline geometry.
+   */
+  onRevertGeometry,
 }) {
   const navigate = useNavigate();
+
+  // normTypeInfo(normTypeId) -> full norm_type record ({ id, name, gender, ... })
+  // from the app-wide DataCache (loaded via GET /norm-types?size=1000).
+  const { normTypeInfo } = useDataCache();
 
   // ── Link types (fetched once on mount) ───────────────────────────────────
   const [linkTypesList, setLinkTypesList] = useState([]);
@@ -688,9 +813,11 @@ export default function VrlToolbar({
   const linkPropsStoreRef = useRef({}); // { [id]: formState }  — current saved values
   const baselineStoreRef  = useRef({}); // { [id]: formState }  — snapshot for cancel
 
-  // linkDocumentIds must be state (not a ref) because it is read during render
-  // to decide "Save link" vs "Update link".
-  const [linkDocumentIds, setLinkDocumentIds] = useState({});
+  // linkDocumentIds and geometryBaselines must be state (not refs) because
+  // they're read during render — the former to decide "Save link" vs "Update
+  // link", the latter to compute geometryDirty below.
+  const [linkDocumentIds,  setLinkDocumentIds]  = useState({});
+  const [geometryBaselines, setGeometryBaselines] = useState({}); // { [id]: {x,y,w,h} }
 
   // Seed per-spot stores from pre-loaded document links (runs once on mount /
   // whenever the parent finishes the GET /documentLinks fetch).
@@ -712,6 +839,14 @@ export default function VrlToolbar({
   // without stale-closure issues. Updated synchronously before the nav effect below.
   const latestFormRef = useRef(formState);
   useEffect(() => { latestFormRef.current = formState; });
+
+  // Ref always holds the latest spots prop, so the spot-switch effect below
+  // can read a spot's CURRENT position/size to capture as its geometry
+  // baseline without needing `spots` in its dependency array — adding it
+  // there would re-run the effect (and reset the baseline) on every
+  // drag/resize tick, not just on an actual spot switch.
+  const spotsRef = useRef(spots);
+  useEffect(() => { spotsRef.current = spots; });
 
   // ── Spot navigation: sync form state when the selected spot changes ───────
   const prevSpotIdRef = useRef(null);
@@ -737,36 +872,98 @@ export default function VrlToolbar({
     setSaveLinkStatus('idle');
 
     // Record this as the baseline so cancel can restore to it.
-    if (currentSpotId) baselineStoreRef.current[currentSpotId] = next;
+    if (currentSpotId) {
+      baselineStoreRef.current[currentSpotId] = next;
+      // Also snapshot the rectangle's current position/size as its geometry
+      // baseline, so later drags/resizes of THIS spot can be detected as
+      // dirty (see geometryDirty below) and reverted on Cancel.
+      const spot = spotsRef.current.find(s => s.id === currentSpotId);
+      if (spot) {
+        const id = currentSpotId;
+        setGeometryBaselines(prev => ({ ...prev, [id]: { x: spot.x, y: spot.y, w: spot.w, h: spot.h } }));
+      }
+    }
   }, [currentSpotId]);
+
+  // ── Geometry dirty-check ─────────────────────────────────────────────────
+  // Compares the active spot's LIVE position/size (from the `spots` prop,
+  // which updates immediately as AnnotationCanvas reports drag/resize) against
+  // the baseline captured above. Recomputed every render — cheap, and must
+  // stay live so the "Dimensions or position changed" note and Save/Cancel
+  // enablement react instantly while dragging.
+  const geometryBaseline = currentSpotId ? geometryBaselines[currentSpotId] : null;
+  const geometryDirty = !!(currentSpot && geometryBaseline && (
+    currentSpot.x !== geometryBaseline.x ||
+    currentSpot.y !== geometryBaseline.y ||
+    currentSpot.w !== geometryBaseline.w ||
+    currentSpot.h !== geometryBaseline.h
+  ));
+  // Combined dirty flag used everywhere isDirty previously gated Save/Cancel/
+  // navigation — a pure position/size change must behave the same as a
+  // form-field edit (block navigation, enable Update, enable Cancel).
+  const effectiveDirty = isDirty || geometryDirty;
+
+  // Whenever a spot becomes selected — from any source: clicking a
+  // rectangle's move handle (editMode) or its click-to-select overlay
+  // (viewMode), drawing a new annotation, the notes panel, or the spots
+  // navigator — auto-expand the link panel, spots nav, and the link
+  // properties form so its details are immediately visible without the user
+  // having to also click the toolbar's panel/nav toggles by hand.
+  //
+  // Done during render (React's documented "adjusting state when a prop
+  // changes" pattern) rather than in an effect, guarded by lastExpandedSpotId
+  // so it only fires once per newly-selected spot — an effect here would
+  // cause a one-frame flash of the still-collapsed panel before it opens.
+  const [lastExpandedSpotId, setLastExpandedSpotId] = useState(null);
+  if (currentSpotId && currentSpotId !== lastExpandedSpotId) {
+    setLastExpandedSpotId(currentSpotId);
+    setLinkPanelOpen(true);
+    setSpotsNavActive(true);
+    setLinkPropsExpanded(true);
+  }
 
   // Notify the parent whenever the dirty flag changes so it can gate
   // rectangle creation / selection elsewhere on the page.
   useEffect(() => {
-    onDirtyChange?.(isDirty);
-  }, [isDirty, onDirtyChange]);
+    onDirtyChange?.(effectiveDirty);
+  }, [effectiveDirty, onDirtyChange]);
 
   // ── Computed link text ───────────────────────────────────────────────────
-  // Auto-built from link type, gender, article, and selected document name.
-  // Suppressed when the user has manually edited the textarea.
+  // Auto-built from link type, side, gender, article, and selected document
+  // name. Suppressed when the user has manually edited the textarea.
   const computedLinkText = useMemo(() => {
     const lt = linkTypesList.find(l => String(l.id) === String(formState.linkTypeId));
-    const activeVerb    = lt ? (lt.active_verb || lt.name || '') : '';
+    // Active side uses the type's plain verb (e.g. "Deroga"). Passive side
+    // uses the gender-agreeing passive form (e.g. "Derogado por" / "Derogada
+    // por") so the sentence agrees with the gender of the document BEING
+    // EDITED (the passive subject of the sentence — e.g. "Ley 123 ... es
+    // derogada por ..."), not the target document referenced by the article
+    // below. Falls back to active_verb/name if the passive field isn't set.
+    const sourceGender = normTypeInfo(sourceDocumentNormTypeId)?.gender === 'M' ? 'masculine' : 'feminine';
+    const verb = lt
+      ? (formState.linkSide === 'passive'
+          ? (sourceGender === 'masculine' ? lt.passive_verb_masculine : lt.passive_verb_feminine)
+            || lt.active_verb || lt.name || ''
+          : lt.active_verb || lt.name || '')
+      : '';
     const article       = formState.linkGender === 'masculine' ? 'el' : 'la';
     const articlePhrase = (formState.articleToggle && formState.articleText.trim())
       ? ('el ' + formState.articleText.trim() + ' de') : '';
     return [
-      activeVerb,
+      verb,
       articlePhrase,
       formState.selectedDocName ? (article + ' {' + formState.selectedDocName + '}') : '',
     ].filter(Boolean).join(' ');
   }, [
     linkTypesList,
     formState.linkTypeId,
+    formState.linkSide,
     formState.linkGender,
     formState.articleToggle,
     formState.articleText,
     formState.selectedDocName,
+    sourceDocumentNormTypeId,
+    normTypeInfo,
   ]);
 
   // What's actually displayed in the textarea.
@@ -800,14 +997,15 @@ export default function VrlToolbar({
     });
   }, [currentSpotId]);
 
-  // ── Notify parent of display-text / doc-id changes ──────────────────────
-  // Fires whenever the computed or edited link text changes for the active spot,
-  // OR when a different spot is selected, so the parent always has the latest
-  // text for the viewMode info panel without waiting for a save.
+  // ── Notify parent of display-text / doc-id / underline changes ──────────
+  // Fires whenever the computed or edited link text, target document, or
+  // underline toggle changes for the active spot, OR when a different spot
+  // is selected, so the parent always has the latest values for the viewMode
+  // info panel and annotation rendering without waiting for a save.
   useEffect(() => {
     if (!currentSpotId) return;
-    onSpotDataChange?.(currentSpotId, displayLinkText, formState.selectedDocId);
-  }, [currentSpotId, displayLinkText, formState.selectedDocId, onSpotDataChange]);
+    onSpotDataChange?.(currentSpotId, displayLinkText, formState.selectedDocId, formState.underline);
+  }, [currentSpotId, displayLinkText, formState.selectedDocId, formState.underline, onSpotDataChange]);
 
   // ── Cancel ───────────────────────────────────────────────────────────────
   const handleLinkPropsCancel = useCallback(() => {
@@ -818,7 +1016,15 @@ export default function VrlToolbar({
     linkPropsStoreRef.current[currentSpotId] = restored;
     setIsDirty(false);
     setSaveLinkStatus('idle');
-  }, [currentSpotId]);
+
+    // Snap the rectangle back to its geometry baseline too, in case the user
+    // moved/resized it without changing any other field.
+    const geoBaseline = geometryBaselines[currentSpotId];
+    const spot = spotsRef.current.find(s => s.id === currentSpotId);
+    if (geoBaseline && spot) {
+      onRevertGeometry?.(spot.pageIndex, currentSpotId, geoBaseline);
+    }
+  }, [currentSpotId, geometryBaselines, onRevertGeometry]);
 
   // ── Drop spot (delete annotation + backend record) ───────────────────────
   // Called from "Drop link" (update mode) or Cancel (creation mode).
@@ -833,6 +1039,7 @@ export default function VrlToolbar({
     }
     delete linkPropsStoreRef.current[currentSpotId];
     delete baselineStoreRef.current[currentSpotId];
+    setGeometryBaselines(prev => { const n = { ...prev }; delete n[currentSpotId]; return n; });
     onDropSpot?.(currentSpotId);
   }, [currentSpotId, linkDocumentIds, onDropSpot]);
 
@@ -842,12 +1049,42 @@ export default function VrlToolbar({
   // the destination page can read it back on landing (see PdfLinkEditorPage).
   // Only reachable when the form is clean and a target document is selected —
   // enforced by the disabled state of the "Go to the related document" button.
-  const handleGoToRelated = useCallback(() => {
+  //
+  // formState.selectedDocName/selectedDocId alone aren't enough to label the
+  // destination's header or resolve its own gender correctly: selectedDocName
+  // is null for links loaded from the backend (GET /documentLinks doesn't
+  // return a name, only target_document_id — see PdfLinkEditorPage's initial
+  // load mapping), and we never captured the target's own norm_type_id at
+  // all. So this fetches the target document's own record via GET
+  // /documents/:id first, then navigates with a real name and a docItem
+  // shaped the same way DocumentForm's navigation does (docItem.normTypeId),
+  // so the destination page's `sourceDocumentNormTypeId` prop — and therefore
+  // its own passive-verb/article gender agreement — resolves correctly too.
+  const handleGoToRelated = useCallback(async () => {
     if (!currentSpotId || !formState.selectedDocId) return;
+
+    let targetDocName = formState.selectedDocName;
+    let targetDocItem = null;
+    try {
+      targetDocItem = await documents.get(formState.selectedDocId);
+      if (!targetDocName) {
+        // GET /documents/:id returns raw stored columns (normTypeId), not the
+        // joined normTypeName that /xdocuments's read-optimized rows have —
+        // resolve the type's display name from the norm type cache instead.
+        const normTypeName = normTypeInfo(targetDocItem?.normTypeId)?.name;
+        targetDocName = [normTypeName, targetDocItem?.number, targetDocItem?.year ? `/${targetDocItem.year}` : '']
+          .filter(Boolean).join(' ') || null;
+      }
+    } catch (e) {
+      console.error('Failed to fetch target document details:', e);
+    }
+
     const originalSideLinkInfo = {
       spotId:             currentSpotId,
       linkDocumentId:     linkDocumentIds[currentSpotId] ?? null,
       sourceDocumentId,
+      sourceDocumentName,
+      sourceDocumentNormTypeId,
       targetDocumentId:   formState.selectedDocId,
       linkTypeId:         formState.linkTypeId,
       linkSide:           formState.linkSide,
@@ -859,9 +1096,18 @@ export default function VrlToolbar({
       linkText:           displayLinkText,
     };
     navigate(`/admin/documents/${formState.selectedDocId}/pdf-link-editor`, {
-      state: { originalSideLinkInfo },
+      // docId/docName/docItem are read by EditorLayout's header and by this
+      // same component's sourceDocumentName/sourceDocumentNormTypeId props on
+      // the destination page (see PdfLinkEditorPage's own navigate() from
+      // DocumentForm for the same shape).
+      state: {
+        docId:   formState.selectedDocId,
+        docName: targetDocName,
+        docItem: targetDocItem,
+        originalSideLinkInfo,
+      },
     });
-  }, [navigate, currentSpotId, linkDocumentIds, sourceDocumentId, formState, displayLinkText]);
+  }, [navigate, currentSpotId, linkDocumentIds, sourceDocumentId, sourceDocumentName, sourceDocumentNormTypeId, formState, displayLinkText, normTypeInfo]);
 
   // ── Save / update link document ──────────────────────────────────────────
   const handleLinkPropsSave = useCallback(async () => {
@@ -878,11 +1124,11 @@ export default function VrlToolbar({
       target_document_id:     formState.selectedDocId,
       link_type_id:           formState.linkTypeId    || null,
       link_side:              formState.linkSide       === 'active'    ? 'A' : 'P',
-      target_document_gender: formState.linkGender     === 'masculine' ? 'M' : 'F',
       specific_article:       formState.articleToggle,
       target_article_text:    formState.articleToggle ? (formState.articleText.trim()   || null) : null,
       target_article_anchor:  formState.articleToggle ? (formState.articleAnchor.trim() || null) : null,
       target_document_type:   formState.targetDocumentType ?? 'pdf',
+      underline:              formState.underline,
       link_text:              displayLinkText.trim() || null,
       page:        spotData?.pageIndex ?? null,
       page_xpos:   spotData?.x        ?? null,
@@ -903,6 +1149,13 @@ export default function VrlToolbar({
       }
       // Advance baseline so a subsequent cancel restores to this saved state.
       baselineStoreRef.current[currentSpotId] = { ...formState };
+      // Position/size was just persisted (page_xpos/ypos/width/height above)
+      // too — advance its baseline the same way, or geometryDirty would keep
+      // reporting "changed" against the now-stale pre-save geometry.
+      if (spotData) {
+        const id = currentSpotId;
+        setGeometryBaselines(prev => ({ ...prev, [id]: { x: spotData.x, y: spotData.y, w: spotData.w, h: spotData.h } }));
+      }
       setIsDirty(false);
       setSaveLinkStatus('saved');
       setTimeout(() => setSaveLinkStatus('idle'), 2000);
@@ -940,9 +1193,13 @@ export default function VrlToolbar({
   }, [searchType, searchNumber, searchYear, searchEntity]);
 
   // Selecting a result updates the form (selectedDocId/Name) and marks dirty.
+  // Also derives linkGender from the target document's norm_type (gender
+  // moved off link_document onto norm_type) via normTypeInfo, keyed by the
+  // normTypeId field on the GET /xdocuments search result.
   const handleSelectResult = useCallback((doc, name) => {
-    handleFormChange({ selectedDocId: doc.id, selectedDocName: name });
-  }, [handleFormChange]);
+    const gender = normTypeInfo(doc.normTypeId)?.gender === 'M' ? 'masculine' : 'feminine';
+    handleFormChange({ selectedDocId: doc.id, selectedDocName: name, linkGender: gender });
+  }, [handleFormChange, normTypeInfo]);
 
   // ── Toolbar drag ─────────────────────────────────────────────────────────
   // Lets the user reposition the floating toolbar by dragging its handle.
@@ -1101,7 +1358,7 @@ export default function VrlToolbar({
               <SpotsNavigator
                 spots={spots}
                 currentSpotIndex={currentSpotIndex}
-                isDirty={isDirty}
+                isDirty={effectiveDirty}
                 linkPropsExpanded={linkPropsExpanded}
                 onNavigate={onNavigate ?? (() => {})}
                 onToggleLinkProps={() => setLinkPropsExpanded(v => !v)}
@@ -1117,12 +1374,15 @@ export default function VrlToolbar({
                 displayLinkText={displayLinkText}
                 onChange={handleFormChange}
                 onArticleTextBlur={handleArticleTextBlur}
-                isDirty={isDirty}
+                isDirty={effectiveDirty}
+                geometryDirty={geometryDirty}
                 saveLinkStatus={saveLinkStatus}
                 onCancel={handleLinkPropsCancel}
                 onSave={handleLinkPropsSave}
                 onDrop={handleDropSpot}
                 onGoToRelated={handleGoToRelated}
+                originalSideLinkInfo={originalSideLinkInfo}
+                normTypeInfo={normTypeInfo}
               />
             )}
 
